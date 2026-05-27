@@ -45,6 +45,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -143,6 +144,8 @@ private:
 
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
 
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr on_set_params_cb_;
+
   // functions used in the constructor
   PlannerCommonParam getPlannerCommonParam();
 
@@ -151,6 +154,9 @@ private:
   void onOdometry(const Odometry::ConstSharedPtr msg);
 
   PoseStamped computeGoalFromPath();
+
+  rcl_interfaces::msg::SetParametersResult onSetParameters(
+    const std::vector<rclcpp::Parameter> & parameters);
 
   void onTimer();
   void updateData();

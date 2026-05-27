@@ -116,6 +116,9 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
       this, get_clock(), period_ns, std::bind(&FreespacePlannerNode::onTimer, this));
   }
 
+  on_set_params_cb_ = add_on_set_parameters_callback(
+    std::bind(&FreespacePlannerNode::onSetParameters, this, std::placeholders::_1));
+
   logger_configure_ = std::make_unique<autoware_utils::LoggerLevelConfigure>(this);
 }
 
@@ -423,6 +426,41 @@ void FreespacePlannerNode::planTrajectory()
     RCLCPP_INFO(get_logger(), "Can't find goal: %s", error_msg.c_str());
     reset();
   }
+}
+
+rcl_interfaces::msg::SetParametersResult FreespacePlannerNode::onSetParameters(
+  const std::vector<rclcpp::Parameter> & parameters)
+{
+  rcl_interfaces::msg::SetParametersResult result;
+  result.successful = true;
+
+  for (const auto & p : parameters) {
+    if (p.get_name() == "waypoints_velocity") {
+      node_param_.waypoints_velocity = p.as_double();
+    } else if (p.get_name() == "th_arrived_distance_m") {
+      node_param_.th_arrived_distance_m = p.as_double();
+    } else if (p.get_name() == "th_stopped_time_sec") {
+      node_param_.th_stopped_time_sec = p.as_double();
+    } else if (p.get_name() == "th_stopped_velocity_mps") {
+      node_param_.th_stopped_velocity_mps = p.as_double();
+    } else if (p.get_name() == "th_course_out_distance_m") {
+      node_param_.th_course_out_distance_m = p.as_double();
+    } else if (p.get_name() == "th_obstacle_time_sec") {
+      node_param_.th_obstacle_time_sec = p.as_double();
+    } else if (p.get_name() == "replan_when_obstacle_found") {
+      node_param_.replan_when_obstacle_found = p.as_bool();
+    } else if (p.get_name() == "replan_when_course_out") {
+      node_param_.replan_when_course_out = p.as_bool();
+    } else if (p.get_name() == "path_lookup_distance") {
+      node_param_.path_lookup_distance = p.as_double();
+    } else if (p.get_name() == "max_planning_velocity") {
+      node_param_.max_planning_velocity = p.as_double();
+    }
+    // planning_algorithm, update_rate, vehicle_shape_margin_m, and all
+    // planner algorithm params require a node restart to take effect.
+  }
+
+  return result;
 }
 
 void FreespacePlannerNode::reset()
