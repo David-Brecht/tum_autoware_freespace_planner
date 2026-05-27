@@ -23,7 +23,6 @@
 #include <vector>
 
 using autoware::freespace_planner::utils::Odometry;
-using autoware::freespace_planner::utils::Scenario;
 using autoware::freespace_planner::utils::Trajectory;
 using autoware::freespace_planner::utils::TrajectoryPoint;
 using autoware::freespace_planning_algorithms::PlannerWaypoint;
@@ -107,27 +106,6 @@ PlannerWaypoints get_waypoints(const size_t n_switches)
   }
 
   return waypoints;
-}
-
-TEST(FreespacePlannerUtilsTest, testIsActive)
-{
-  Scenario::ConstSharedPtr scenario_ptr;
-
-  EXPECT_FALSE(autoware::freespace_planner::utils::is_active(scenario_ptr));
-
-  Scenario scenario;
-  scenario.current_scenario = Scenario::EMPTY;
-  scenario_ptr = std::make_shared<Scenario>(scenario);
-  EXPECT_FALSE(autoware::freespace_planner::utils::is_active(scenario_ptr));
-
-  scenario.current_scenario = Scenario::LANEDRIVING;
-  scenario_ptr = std::make_shared<Scenario>(scenario);
-  EXPECT_FALSE(autoware::freespace_planner::utils::is_active(scenario_ptr));
-
-  scenario.current_scenario = Scenario::PARKING;
-  scenario.activating_scenarios.push_back(Scenario::PARKING);
-  scenario_ptr = std::make_shared<Scenario>(scenario);
-  EXPECT_TRUE(autoware::freespace_planner::utils::is_active(scenario_ptr));
 }
 
 TEST(FreespacePlannerUtilsTest, testIsStopped)

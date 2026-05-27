@@ -19,7 +19,6 @@
 
 #include <rclcpp/rclcpp.hpp>
 
-#include <autoware_internal_planning_msgs/msg/scenario.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <autoware_planning_msgs/msg/trajectory_point.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
@@ -34,7 +33,6 @@ namespace autoware::freespace_planner::utils
 {
 using autoware::freespace_planning_algorithms::PlannerWaypoint;
 using autoware::freespace_planning_algorithms::PlannerWaypoints;
-using autoware_internal_planning_msgs::msg::Scenario;
 using autoware_planning_msgs::msg::Trajectory;
 using autoware_planning_msgs::msg::TrajectoryPoint;
 using geometry_msgs::msg::Pose;
@@ -48,8 +46,6 @@ PoseArray trajectory_to_pose_array(const Trajectory & trajectory);
 double calc_distance_2d(const Trajectory & trajectory, const Pose & pose);
 
 Pose transform_pose(const Pose & pose, const TransformStamped & transform);
-
-bool is_active(const Scenario::ConstSharedPtr & scenario);
 
 std::vector<size_t> get_reversing_indices(const Trajectory & trajectory);
 

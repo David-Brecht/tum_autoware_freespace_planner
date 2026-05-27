@@ -39,7 +39,9 @@
 #include <autoware_utils/system/stop_watch.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -66,6 +68,8 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     p.vehicle_shape_margin_m = declare_parameter<double>("vehicle_shape_margin_m");
     p.replan_when_obstacle_found = declare_parameter<bool>("replan_when_obstacle_found");
     p.replan_when_course_out = declare_parameter<bool>("replan_when_course_out");
+    p.path_lookup_distance = declare_parameter<double>("path_lookup_distance");
+    p.max_planning_velocity = declare_parameter<double>("max_planning_velocity");
   }
 
   // set vehicle_info
@@ -83,18 +87,18 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
   initializePlanningAlgorithm();
 
   // Subscribers
-  route_sub_ = create_subscription<LaneletRoute>(
-    "~/input/route", rclcpp::QoS{1}.transient_local(),
-    std::bind(&FreespacePlannerNode::onRoute, this, _1));
+  path_sub_ = create_subscription<Path>(
+    "~/input/path", rclcpp::QoS{1},
+    std::bind(&FreespacePlannerNode::onPath, this, _1));
 
   // Publishers
   {
     rclcpp::QoS qos{1};
-    qos.transient_local();  // latch
+    qos.transient_local();
     trajectory_pub_ = create_publisher<Trajectory>("~/output/trajectory", qos);
     debug_pose_array_pub_ = create_publisher<PoseArray>("~/debug/pose_array", qos);
     debug_partial_pose_array_pub_ = create_publisher<PoseArray>("~/debug/partial_pose_array", qos);
-    parking_state_pub_ = create_publisher<std_msgs::msg::Bool>("is_completed", qos);
+    is_completed_pub_ = create_publisher<std_msgs::msg::Bool>("is_completed", qos);
     processing_time_pub_ = create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
       "~/debug/processing_time_ms", 1);
   }
@@ -163,6 +167,10 @@ bool FreespacePlannerNode::isPlanRequired()
 
 bool FreespacePlannerNode::checkCurrentTrajectoryCollision()
 {
+  if (partial_trajectory_.points.empty()) {
+    return false;
+  }
+
   algo_->setMap(*occupancy_grid_);
 
   const size_t nearest_index_partial = autoware::motion_utils::findNearestIndex(
@@ -200,12 +208,13 @@ void FreespacePlannerNode::updateTargetIndex()
     utils::get_next_target_index(trajectory_.points.size(), reversing_indices_, target_index_);
 
   if (new_target_index == target_index_) {
-    // Finished publishing all partial trajectories
+    // Reached the end of the current planned segment — reset so the next tick replans toward
+    // the updated rolling goal.
     is_completed_ = true;
-    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Freespace planning completed");
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Freespace segment completed, replanning toward updated goal");
     std_msgs::msg::Bool is_completed_msg;
-    is_completed_msg.data = is_completed_;
-    parking_state_pub_->publish(is_completed_msg);
+    is_completed_msg.data = true;
+    is_completed_pub_->publish(is_completed_msg);
   } else {
     // Switch to next partial trajectory
     prev_target_index_ = target_index_;
@@ -213,15 +222,9 @@ void FreespacePlannerNode::updateTargetIndex()
   }
 }
 
-void FreespacePlannerNode::onRoute(const LaneletRoute::ConstSharedPtr msg)
+void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
 {
-  route_ = msg;
-
-  goal_pose_.header = msg->header;
-  goal_pose_.pose = msg->goal_pose;
-
-  is_new_parking_cycle_ = true;
-
+  path_ = msg;
   reset();
 }
 
@@ -244,6 +247,42 @@ void FreespacePlannerNode::onOdometry(const Odometry::ConstSharedPtr msg)
   }
 }
 
+PoseStamped FreespacePlannerNode::computeGoalFromPath()
+{
+  const auto & pts = path_->points;
+
+  // Find nearest point on the path to the current vehicle pose
+  size_t nearest_idx = 0;
+  double min_dist_sq = std::numeric_limits<double>::max();
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const double dx = pts[i].pose.position.x - current_pose_.pose.position.x;
+    const double dy = pts[i].pose.position.y - current_pose_.pose.position.y;
+    const double dist_sq = dx * dx + dy * dy;
+    if (dist_sq < min_dist_sq) {
+      min_dist_sq = dist_sq;
+      nearest_idx = i;
+    }
+  }
+
+  // Walk forward along the path until path_lookup_distance is accumulated
+  double accumulated = 0.0;
+  size_t goal_idx = nearest_idx;
+  for (size_t i = nearest_idx + 1; i < pts.size(); ++i) {
+    const double dx = pts[i].pose.position.x - pts[i - 1].pose.position.x;
+    const double dy = pts[i].pose.position.y - pts[i - 1].pose.position.y;
+    accumulated += std::sqrt(dx * dx + dy * dy);
+    goal_idx = i;
+    if (accumulated >= node_param_.path_lookup_distance) {
+      break;
+    }
+  }
+
+  PoseStamped goal;
+  goal.header = path_->header;
+  goal.pose = pts[goal_idx].pose;
+  return goal;
+}
+
 void FreespacePlannerNode::updateData()
 {
   occupancy_grid_ = occupancy_grid_sub_.take_data();
@@ -260,8 +299,8 @@ bool FreespacePlannerNode::isDataReady()
 {
   bool is_ready = true;
 
-  if (!route_) {
-    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for route data.");
+  if (!path_) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for path data.");
     is_ready = false;
   }
 
@@ -282,70 +321,46 @@ void FreespacePlannerNode::onTimer()
 {
   autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
 
-  scenario_ = scenario_sub_.take_data();
-  if (!utils::is_active(scenario_)) {
-    reset();
-    return;
-  }
-
   updateData();
 
   if (!isDataReady()) {
     return;
   }
 
-  if (is_completed_) {
-    partial_trajectory_.header = odom_->header;
-    const auto stop_trajectory = utils::create_stop_trajectory(partial_trajectory_);
-    trajectory_pub_->publish(stop_trajectory);
-    return;
-  }
-
-  // Get current pose
+  // Update current pose
   current_pose_.pose = odom_->pose.pose;
   current_pose_.header = odom_->header;
 
-  if (current_pose_.header.frame_id == "") {
+  if (current_pose_.header.frame_id.empty()) {
     return;
   }
 
-  // Must stop before replanning any new trajectory
-  const bool is_reset_required = !reset_in_progress_ && isPlanRequired();
-  if (is_reset_required) {
-    // Stop before planning new trajectory, except in a new parking cycle as the vehicle already
-    // stops.
-    if (!is_new_parking_cycle_) {
-      const auto stop_trajectory = partial_trajectory_.points.empty()
-                                     ? utils::create_stop_trajectory(current_pose_, get_clock())
-                                     : utils::create_stop_trajectory(partial_trajectory_);
-      trajectory_pub_->publish(stop_trajectory);
-      debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
-      debug_partial_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
-    }
+  // Update rolling goal: the point path_lookup_distance ahead along the reference path
+  goal_pose_ = computeGoalFromPath();
 
+  // If the previous segment was completed, reset so we replan toward the updated goal
+  if (is_completed_) {
     reset();
-
-    reset_in_progress_ = true;
   }
 
-  if (reset_in_progress_) {
-    const auto is_ego_stopped =
-      utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
-    if (is_ego_stopped) {
-      // Plan new trajectory
+  // Compute current speed from odometry
+  const auto & lin = odom_->twist.twist.linear;
+  const double current_speed = std::sqrt(lin.x * lin.x + lin.y * lin.y);
+  const bool is_below_max_velocity = current_speed < node_param_.max_planning_velocity;
+
+  // Replan when required and ego is slow enough for planning
+  if (isPlanRequired()) {
+    if (is_below_max_velocity) {
       planTrajectory();
-      reset_in_progress_ = false;
     } else {
-      // Will keep current stop trajectory
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 1000,
-        "Waiting for the vehicle to stop before generating a new trajectory.");
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Skipping replan: speed %.2f m/s exceeds max_planning_velocity %.2f m/s",
+        current_speed, node_param_.max_planning_velocity);
     }
   }
 
-  // StopTrajectory
   if (trajectory_.points.size() <= 1) {
-    is_new_parking_cycle_ = false;
     return;
   }
 
@@ -358,8 +373,6 @@ void FreespacePlannerNode::onTimer()
   trajectory_pub_->publish(partial_trajectory_);
   debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(trajectory_));
   debug_partial_pose_array_pub_->publish(utils::trajectory_to_pose_array(partial_trajectory_));
-
-  is_new_parking_cycle_ = false;
 
   // Publish ProcessingTime
   autoware_internal_debug_msgs::msg::Float64Stamped processing_time_msg;
@@ -418,8 +431,8 @@ void FreespacePlannerNode::reset()
   partial_trajectory_ = Trajectory();
   is_completed_ = false;
   std_msgs::msg::Bool is_completed_msg;
-  is_completed_msg.data = is_completed_;
-  parking_state_pub_->publish(is_completed_msg);
+  is_completed_msg.data = false;
+  is_completed_pub_->publish(is_completed_msg);
   obs_found_time_ = {};
 }
 

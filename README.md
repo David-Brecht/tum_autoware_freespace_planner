@@ -1,5 +1,14 @@
 # The `tum_autoware_freespace_planner`
 
+## About the `tum_autoware_freespace_planner`
+
+This is a fork of the official `autoware_freespace_planner` that is used for suggestig trajectories used in teleoperation (Waypoint Guidance / Collaborative Planning).
+
+The following main changes have been made:
+- The planner still subscribes to a path message (the reference path from behavior planning) but sets the desired goalpoint for the freespace planner always some distance away from the ego vehicle along that path (configurable via a ROS2 parameter)
+- Algorithm does always run in the background, not only when the parking mode of autoware is selected over the lane_following mode and not only when the vehicle is stopped
+- Alows to externally pass in additional poses as boundary conditions / check points that the planner shall follow
+
 ## freespace_planner_node
 
 `freespace_planner_node` is a global path planner node that plans trajectory

@@ -52,14 +52,6 @@ Pose transform_pose(const Pose & pose, const TransformStamped & transform)
   return transformed_pose.pose;
 }
 
-bool is_active(const Scenario::ConstSharedPtr & scenario)
-{
-  if (!scenario) return false;
-
-  const auto & s = scenario->activating_scenarios;
-  return std::find(std::begin(s), std::end(s), Scenario::PARKING) != std::end(s);
-}
-
 std::vector<size_t> get_reversing_indices(const Trajectory & trajectory)
 {
   std::vector<size_t> indices;

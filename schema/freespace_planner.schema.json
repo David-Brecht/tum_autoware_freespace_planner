@@ -62,6 +62,16 @@
           "default": true,
           "description": "Replan path when the vehicle deviates from its course."
         },
+        "path_lookup_distance": {
+          "type": "number",
+          "default": 30.0,
+          "description": "Distance ahead along the reference path used as the rolling goal for the planner [m]."
+        },
+        "max_planning_velocity": {
+          "type": "number",
+          "default": 10.0,
+          "description": "Maximum ego speed [m/s] at which the planner is allowed to generate a new trajectory. Replanning is skipped above this threshold."
+        },
         "time_limit": {
           "type": "number",
           "default": 30000.0,
@@ -230,6 +240,8 @@
         "vehicle_shape_margin_m",
         "replan_when_obstacle_found",
         "replan_when_course_out",
+        "path_lookup_distance",
+        "max_planning_velocity",
         "time_limit",
         "max_turning_ratio",
         "turning_steps",

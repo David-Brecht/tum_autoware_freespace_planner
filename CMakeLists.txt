@@ -5,8 +5,8 @@ find_package(autoware_cmake REQUIRED)
 autoware_package()
 
 ament_auto_add_library(freespace_planner_node SHARED
-  src/tum_autoware_freespace_planner/freespace_planner_node.cpp
-  src/tum_autoware_freespace_planner/utils.cpp
+  src/autoware_freespace_planner/freespace_planner_node.cpp
+  src/autoware_freespace_planner/utils.cpp
 )
 
 rclcpp_components_register_node(freespace_planner_node

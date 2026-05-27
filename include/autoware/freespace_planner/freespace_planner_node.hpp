@@ -35,14 +35,12 @@
 
 #include <autoware/freespace_planning_algorithms/astar_search.hpp>
 #include <autoware/freespace_planning_algorithms/rrtstar.hpp>
-#include <autoware/route_handler/route_handler.hpp>
 #include <autoware_utils/ros/polling_subscriber.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <autoware_internal_debug_msgs/msg/float64_stamped.hpp>
-#include <autoware_internal_planning_msgs/msg/scenario.hpp>
-#include <autoware_planning_msgs/msg/lanelet_route.hpp>
+#include <autoware_planning_msgs/msg/path.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
@@ -70,8 +68,7 @@ using autoware::freespace_planning_algorithms::PlannerCommonParam;
 using autoware::freespace_planning_algorithms::RRTStar;
 using autoware::freespace_planning_algorithms::RRTStarParam;
 using autoware::freespace_planning_algorithms::VehicleShape;
-using autoware_internal_planning_msgs::msg::Scenario;
-using autoware_planning_msgs::msg::LaneletRoute;
+using autoware_planning_msgs::msg::Path;
 using autoware_planning_msgs::msg::Trajectory;
 using geometry_msgs::msg::PoseArray;
 using geometry_msgs::msg::PoseStamped;
@@ -93,6 +90,8 @@ struct NodeParam
   double vehicle_shape_margin_m;
   bool replan_when_obstacle_found;
   bool replan_when_course_out;
+  double path_lookup_distance;      // distance ahead along the reference path used as goal [m]
+  double max_planning_velocity;     // plan only when ego speed is below this threshold [m/s]
 };
 
 class FreespacePlannerNode : public rclcpp::Node
@@ -105,15 +104,14 @@ private:
   rclcpp::Publisher<Trajectory>::SharedPtr trajectory_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_pose_array_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_partial_pose_array_pub_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr parking_state_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr is_completed_pub_;
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
     processing_time_pub_;
 
-  rclcpp::Subscription<LaneletRoute>::SharedPtr route_sub_;
+  rclcpp::Subscription<Path>::SharedPtr path_sub_;
 
   autoware_utils::InterProcessPollingSubscriber<OccupancyGrid> occupancy_grid_sub_{
     this, "~/input/occupancy_grid"};
-  autoware_utils::InterProcessPollingSubscriber<Scenario> scenario_sub_{this, "~/input/scenario"};
   autoware_utils::InterProcessPollingSubscriber<Odometry, autoware_utils::polling_policy::All>
     odom_sub_{this, "~/input/odometry", rclcpp::QoS{100}};
 
@@ -137,15 +135,11 @@ private:
   size_t prev_target_index_;
   size_t target_index_;
   bool is_completed_ = false;
-  bool reset_in_progress_ = false;
-  bool is_new_parking_cycle_ = true;
   boost::optional<rclcpp::Time> obs_found_time_;
 
-  LaneletRoute::ConstSharedPtr route_;
+  Path::ConstSharedPtr path_;
   OccupancyGrid::ConstSharedPtr occupancy_grid_;
-  Scenario::ConstSharedPtr scenario_;
   Odometry::ConstSharedPtr odom_;
-  std::shared_ptr<autoware::route_handler::RouteHandler> route_handler_;
 
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
 
@@ -153,8 +147,10 @@ private:
   PlannerCommonParam getPlannerCommonParam();
 
   // functions, callback
-  void onRoute(const LaneletRoute::ConstSharedPtr msg);
+  void onPath(const Path::ConstSharedPtr msg);
   void onOdometry(const Odometry::ConstSharedPtr msg);
+
+  PoseStamped computeGoalFromPath();
 
   void onTimer();
   void updateData();

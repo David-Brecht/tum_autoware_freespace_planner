@@ -1,9 +1,8 @@
 <launch>
-  <arg name="input_route" default="input_route"/>
-  <arg name="input_occupancy_grid" default="input_occupancy_grid"/>
-  <arg name="input_scenario" default="input_scenario"/>
+  <arg name="input_path" default="/planning/scenario_planning/lane_driving/behavior_planning/path"/>
+  <arg name="input_occupancy_grid" default="/planning/scenario_planning/parking/costmap_generator/occupancy_grid"/>
   <arg name="input_odometry" default="/localization/kinematic_state"/>
-  <arg name="output_trajectory" default="output_trajectory"/>
+  <arg name="output_trajectory" default="/external/remote/trajectory"/>
   <arg name="is_completed" default="is_completed"/>
 
   <arg name="param_file" default="$(find-pkg-share tum_autoware_freespace_planner)/config/freespace_planner.param.yaml"/>
@@ -11,10 +10,9 @@
   <!-- vehicle info -->
   <arg name="vehicle_info_param_file" default="$(find-pkg-share autoware_vehicle_info_utils)/config/vehicle_info.param.yaml"/>
 
-  <node pkg="tum_autoware_freespace_planner" exec="freespace_planner" name="freespace_planner" output="screen">
-    <remap from="~/input/route" to="$(var input_route)"/>
+  <node pkg="tum_autoware_freespace_planner" exec="freespace_planner" namespace="/external/remote" name="freespace_planner" output="screen">
+    <remap from="~/input/path" to="$(var input_path)"/>
     <remap from="~/input/occupancy_grid" to="$(var input_occupancy_grid)"/>
-    <remap from="~/input/scenario" to="$(var input_scenario)"/>
     <remap from="~/input/odometry" to="$(var input_odometry)"/>
     <remap from="~/output/trajectory" to="$(var output_trajectory)"/>
     <remap from="is_completed" to="$(var is_completed)"/>
