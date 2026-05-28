@@ -91,8 +91,11 @@ struct NodeParam
   double vehicle_shape_margin_m;
   bool replan_when_obstacle_found;
   bool replan_when_course_out;
-  double path_lookup_distance;      // distance ahead along the reference path used as goal [m]
-  double max_planning_velocity;     // plan only when ego speed is below this threshold [m/s]
+  double path_lookup_distance;       // distance ahead along the reference path used as goal [m]
+  double max_planning_velocity;      // plan only when ego speed is below this threshold [m/s]
+  bool use_path_distance_cost;       // enable reference-path attraction cost layer
+  double path_distance_weight;       // weight for path distance cost (linear: weight * dist_m)
+  double path_distance_viz_cap;      // distance [m] that maps to full cost in the debug costmap
 };
 
 class FreespacePlannerNode : public rclcpp::Node
@@ -108,6 +111,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr is_completed_pub_;
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
     processing_time_pub_;
+  rclcpp::Publisher<OccupancyGrid>::SharedPtr debug_obstacle_cost_pub_;
 
   rclcpp::Subscription<Path>::SharedPtr path_sub_;
 
@@ -141,6 +145,8 @@ private:
   Path::ConstSharedPtr path_;
   OccupancyGrid::ConstSharedPtr occupancy_grid_;
   Odometry::ConstSharedPtr odom_;
+
+  std::vector<float> path_distance_map_;  // free-space distance raster from reference path (m)
 
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
 
@@ -198,6 +204,8 @@ private:
   bool checkCurrentTrajectoryCollision();
 
   TransformStamped getTransform(const std::string & from, const std::string & to);
+  void computePathDistanceMap();
+  void publishDebugCostmap();
 
   std::unique_ptr<autoware_utils::LoggerLevelConfigure> logger_configure_;
 

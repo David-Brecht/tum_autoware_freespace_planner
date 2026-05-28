@@ -43,6 +43,7 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
@@ -70,6 +71,9 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     p.replan_when_course_out = declare_parameter<bool>("replan_when_course_out");
     p.path_lookup_distance = declare_parameter<double>("path_lookup_distance");
     p.max_planning_velocity = declare_parameter<double>("max_planning_velocity");
+    p.use_path_distance_cost = declare_parameter<bool>("use_path_distance_cost");
+    p.path_distance_weight = declare_parameter<double>("path_distance_weight");
+    p.path_distance_viz_cap = declare_parameter<double>("path_distance_viz_cap");
   }
 
   // set vehicle_info
@@ -81,6 +85,36 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     vehicle_shape_.base_length = vehicle_info.wheel_base_m;
     vehicle_shape_.max_steering = vehicle_info.max_steer_angle_rad;
     vehicle_shape_.base2back = vehicle_info.rear_overhang_m;
+  }
+
+  // Declare planner/algo params once here; read via get_parameter() on every (re)init.
+  {
+    declare_parameter<double>("time_limit");
+    declare_parameter<int>("theta_size");
+    declare_parameter<double>("angle_goal_range");
+    declare_parameter<double>("curve_weight");
+    declare_parameter<double>("reverse_weight");
+    declare_parameter<double>("direction_change_weight");
+    declare_parameter<double>("lateral_goal_range");
+    declare_parameter<double>("longitudinal_goal_range");
+    declare_parameter<double>("max_turning_ratio");
+    declare_parameter<int>("turning_steps");
+    declare_parameter<int>("obstacle_threshold");
+    declare_parameter<std::string>("astar.search_method");
+    declare_parameter<bool>("astar.only_behind_solutions");
+    declare_parameter<bool>("astar.use_back");
+    declare_parameter<bool>("astar.adapt_expansion_distance");
+    declare_parameter<double>("astar.expansion_distance");
+    declare_parameter<double>("astar.near_goal_distance");
+    declare_parameter<double>("astar.distance_heuristic_weight");
+    declare_parameter<double>("astar.smoothness_weight");
+    declare_parameter<double>("astar.obstacle_distance_weight");
+    declare_parameter<double>("astar.goal_lat_distance_weight");
+    declare_parameter<bool>("rrtstar.enable_update");
+    declare_parameter<bool>("rrtstar.use_informed_sampling");
+    declare_parameter<double>("rrtstar.max_planning_time");
+    declare_parameter<double>("rrtstar.neighbor_radius");
+    declare_parameter<double>("rrtstar.margin");
   }
 
   // Planning
@@ -101,6 +135,8 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     is_completed_pub_ = create_publisher<std_msgs::msg::Bool>("is_completed", qos);
     processing_time_pub_ = create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
       "~/debug/processing_time_ms", 1);
+    debug_obstacle_cost_pub_ =
+      create_publisher<OccupancyGrid>("/external/remote/freespace_planner/debug/costmap", 1);
   }
 
   // TF
@@ -125,23 +161,17 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
 PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
 {
   PlannerCommonParam p;
-
-  // search configs
-  p.time_limit = declare_parameter<double>("time_limit");
-
-  p.theta_size = declare_parameter<int>("theta_size");
-  p.angle_goal_range = declare_parameter<double>("angle_goal_range");
-  p.curve_weight = declare_parameter<double>("curve_weight");
-  p.reverse_weight = declare_parameter<double>("reverse_weight");
-  p.direction_change_weight = declare_parameter<double>("direction_change_weight");
-  p.lateral_goal_range = declare_parameter<double>("lateral_goal_range");
-  p.longitudinal_goal_range = declare_parameter<double>("longitudinal_goal_range");
-  p.max_turning_ratio = declare_parameter<double>("max_turning_ratio");
-  p.turning_steps = declare_parameter<int>("turning_steps");
-
-  // costmap configs
-  p.obstacle_threshold = declare_parameter<int>("obstacle_threshold");
-
+  p.time_limit = get_parameter("time_limit").as_double();
+  p.theta_size = static_cast<int>(get_parameter("theta_size").as_int());
+  p.angle_goal_range = get_parameter("angle_goal_range").as_double();
+  p.curve_weight = get_parameter("curve_weight").as_double();
+  p.reverse_weight = get_parameter("reverse_weight").as_double();
+  p.direction_change_weight = get_parameter("direction_change_weight").as_double();
+  p.lateral_goal_range = get_parameter("lateral_goal_range").as_double();
+  p.longitudinal_goal_range = get_parameter("longitudinal_goal_range").as_double();
+  p.max_turning_ratio = get_parameter("max_turning_ratio").as_double();
+  p.turning_steps = static_cast<int>(get_parameter("turning_steps").as_int());
+  p.obstacle_threshold = static_cast<int>(get_parameter("obstacle_threshold").as_int());
   return p;
 }
 
@@ -392,6 +422,9 @@ void FreespacePlannerNode::planTrajectory()
 
   // Provide robot shape and map for the planner
   algo_->setMap(*occupancy_grid_);
+  computePathDistanceMap();
+  algo_->setPathDistanceCost(path_distance_map_, node_param_.path_distance_weight);
+  publishDebugCostmap();
 
   // Calculate poses in costmap frame
   const auto current_pose_in_costmap_frame = utils::transform_pose(
@@ -428,36 +461,200 @@ void FreespacePlannerNode::planTrajectory()
   }
 }
 
+void FreespacePlannerNode::computePathDistanceMap()
+{
+  if (!node_param_.use_path_distance_cost || !path_ || !algo_) {
+    path_distance_map_.clear();
+    return;
+  }
+
+  const auto & costmap = algo_->getCostmap();
+  const auto & obstacle_table = algo_->getObstacleTable();
+  const int W = static_cast<int>(costmap.info.width);
+  const int H = static_cast<int>(costmap.info.height);
+  const int N = W * H;
+  const float res = costmap.info.resolution;
+  const float ox = static_cast<float>(costmap.info.origin.position.x);
+  const float oy = static_cast<float>(costmap.info.origin.position.y);
+
+  path_distance_map_.assign(N, std::numeric_limits<float>::max());
+
+  // Seed the Dijkstra with every free cell that the reference path passes through.
+  // Interpolate linearly between consecutive waypoints at costmap resolution so there
+  // are no gaps in the seed set regardless of waypoint spacing.
+  using Entry = std::pair<float, int>;
+  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> heap;
+
+  const auto try_seed = [&](const float px, const float py) {
+    const int cx = static_cast<int>((px - ox) / res);
+    const int cy = static_cast<int>((py - oy) / res);
+    if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+    const int id = cy * W + cx;
+    if (obstacle_table[id] || path_distance_map_[id] == 0.0f) return;
+    path_distance_map_[id] = 0.0f;
+    heap.push({0.0f, id});
+  };
+
+  for (size_t i = 0; i + 1 < path_->points.size(); ++i) {
+    const float x0 = static_cast<float>(path_->points[i].pose.position.x);
+    const float y0 = static_cast<float>(path_->points[i].pose.position.y);
+    const float x1 = static_cast<float>(path_->points[i + 1].pose.position.x);
+    const float y1 = static_cast<float>(path_->points[i + 1].pose.position.y);
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    const int steps = std::max(1, static_cast<int>(std::ceil(std::hypot(dx, dy) / res)));
+    for (int s = 0; s <= steps; ++s) {
+      const float t = static_cast<float>(s) / static_cast<float>(steps);
+      try_seed(x0 + t * dx, y0 + t * dy);
+    }
+  }
+  // Cover a single-point path or the last point of a multi-point path
+  if (!path_->points.empty()) {
+    try_seed(
+      static_cast<float>(path_->points.back().pose.position.x),
+      static_cast<float>(path_->points.back().pose.position.y));
+  }
+
+  // 8-connected Dijkstra expanding only through free cells
+  constexpr std::array<int, 8> DX = {1, -1, 0, 0, 1, -1, 1, -1};
+  constexpr std::array<int, 8> DY = {0, 0, 1, -1, 1, 1, -1, -1};
+  const float diag = res * 1.41421356f;
+  const std::array<float, 8> STEP = {res, res, res, res, diag, diag, diag, diag};
+
+  while (!heap.empty()) {
+    const auto [dist, id] = heap.top();
+    heap.pop();
+    if (dist > path_distance_map_[id]) continue;  // stale entry — skip
+
+    const int cx = id % W;
+    const int cy = id / W;
+    for (int k = 0; k < 8; ++k) {
+      const int nx = cx + DX[k];
+      const int ny = cy + DY[k];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const int nid = ny * W + nx;
+      if (obstacle_table[nid]) continue;
+      const float nd = dist + STEP[k];
+      if (nd < path_distance_map_[nid]) {
+        path_distance_map_[nid] = nd;
+        heap.push({nd, nid});
+      }
+    }
+  }
+}
+
+void FreespacePlannerNode::publishDebugCostmap()
+{
+  if (!algo_ || debug_obstacle_cost_pub_->get_subscription_count() == 0) return;
+
+  const auto & costmap = algo_->getCostmap();
+  const auto & edt_map = algo_->getEDTMap();
+  const auto & obstacle_table = algo_->getObstacleTable();
+
+  const int n = static_cast<int>(costmap.info.width * costmap.info.height);
+  if (static_cast<int>(edt_map.size()) != n || static_cast<int>(obstacle_table.size()) != n) {
+    return;
+  }
+
+  // Obstacle proximity: active within max_dimension + 1.0 m (mirrors AstarSearch internals)
+  const double obs_cap = vehicle_shape_.max_dimension + 1.0;
+  // Path distance: linear normalization capped at viz_cap
+  const double path_cap = node_param_.path_distance_viz_cap;
+  const bool has_path_layer =
+    node_param_.use_path_distance_cost &&
+    static_cast<int>(path_distance_map_.size()) == n;
+
+  OccupancyGrid debug_grid;
+  debug_grid.header = costmap.header;
+  debug_grid.info = costmap.info;
+  debug_grid.data.resize(n);
+
+  for (int i = 0; i < n; ++i) {
+    if (obstacle_table[i]) {
+      debug_grid.data[i] = 100;
+      continue;
+    }
+    // Obstacle proximity factor [0, 1]: 1 = right next to obstacle, 0 = beyond obs_cap
+    const double obs_f = std::max(0.0, 1.0 - edt_map[i].distance / obs_cap);
+
+    // Path distance factor [0, 1]: 1 = far from path (up to path_cap), 0 = on the path
+    double path_f = 0.0;
+    if (has_path_layer) {
+      const float pd = path_distance_map_[i];
+      if (pd < std::numeric_limits<float>::max()) {
+        path_f = std::min(1.0, static_cast<double>(pd) / path_cap);
+      } else {
+        path_f = 1.0;
+      }
+    }
+
+    // Additive blend, clamped to [0, 99] so obstacles remain unique at 100
+    const double combined = std::min(1.0, obs_f + path_f);
+    debug_grid.data[i] = static_cast<int8_t>(std::lround(combined * 99.0));
+  }
+
+  debug_obstacle_cost_pub_->publish(debug_grid);
+}
+
 rcl_interfaces::msg::SetParametersResult FreespacePlannerNode::onSetParameters(
   const std::vector<rclcpp::Parameter> & parameters)
 {
   rcl_interfaces::msg::SetParametersResult result;
   result.successful = true;
 
+  static const std::vector<std::string> algo_param_names = {
+    "time_limit", "theta_size", "angle_goal_range", "curve_weight", "reverse_weight",
+    "direction_change_weight", "lateral_goal_range", "longitudinal_goal_range",
+    "max_turning_ratio", "turning_steps", "obstacle_threshold",
+    "astar.search_method", "astar.only_behind_solutions", "astar.use_back",
+    "astar.adapt_expansion_distance", "astar.expansion_distance", "astar.near_goal_distance",
+    "astar.distance_heuristic_weight", "astar.smoothness_weight",
+    "astar.obstacle_distance_weight", "astar.goal_lat_distance_weight",
+    "rrtstar.enable_update", "rrtstar.use_informed_sampling", "rrtstar.max_planning_time",
+    "rrtstar.neighbor_radius", "rrtstar.margin"};
+
+  bool algo_reinit_needed = false;
+
   for (const auto & p : parameters) {
-    if (p.get_name() == "waypoints_velocity") {
+    const auto & name = p.get_name();
+    if (name == "waypoints_velocity") {
       node_param_.waypoints_velocity = p.as_double();
-    } else if (p.get_name() == "th_arrived_distance_m") {
+    } else if (name == "th_arrived_distance_m") {
       node_param_.th_arrived_distance_m = p.as_double();
-    } else if (p.get_name() == "th_stopped_time_sec") {
+    } else if (name == "th_stopped_time_sec") {
       node_param_.th_stopped_time_sec = p.as_double();
-    } else if (p.get_name() == "th_stopped_velocity_mps") {
+    } else if (name == "th_stopped_velocity_mps") {
       node_param_.th_stopped_velocity_mps = p.as_double();
-    } else if (p.get_name() == "th_course_out_distance_m") {
+    } else if (name == "th_course_out_distance_m") {
       node_param_.th_course_out_distance_m = p.as_double();
-    } else if (p.get_name() == "th_obstacle_time_sec") {
+    } else if (name == "th_obstacle_time_sec") {
       node_param_.th_obstacle_time_sec = p.as_double();
-    } else if (p.get_name() == "replan_when_obstacle_found") {
+    } else if (name == "replan_when_obstacle_found") {
       node_param_.replan_when_obstacle_found = p.as_bool();
-    } else if (p.get_name() == "replan_when_course_out") {
+    } else if (name == "replan_when_course_out") {
       node_param_.replan_when_course_out = p.as_bool();
-    } else if (p.get_name() == "path_lookup_distance") {
+    } else if (name == "path_lookup_distance") {
       node_param_.path_lookup_distance = p.as_double();
-    } else if (p.get_name() == "max_planning_velocity") {
+    } else if (name == "max_planning_velocity") {
       node_param_.max_planning_velocity = p.as_double();
+    } else if (name == "use_path_distance_cost") {
+      node_param_.use_path_distance_cost = p.as_bool();
+    } else if (name == "path_distance_weight") {
+      node_param_.path_distance_weight = p.as_double();
+    } else if (name == "path_distance_viz_cap") {
+      node_param_.path_distance_viz_cap = p.as_double();
+    } else if (
+      std::find(algo_param_names.begin(), algo_param_names.end(), name) !=
+      algo_param_names.end()) {
+      algo_reinit_needed = true;
     }
-    // planning_algorithm, update_rate, vehicle_shape_margin_m, and all
-    // planner algorithm params require a node restart to take effect.
+    // planning_algorithm, update_rate, and vehicle_shape_margin_m require a node restart.
+  }
+
+  if (algo_reinit_needed) {
+    RCLCPP_INFO(get_logger(), "Planner algorithm params changed — reinitializing.");
+    initializePlanningAlgorithm();
+    reset();
   }
 
   return result;
@@ -500,11 +697,29 @@ void FreespacePlannerNode::initializePlanningAlgorithm()
 
   const auto algo_name = node_param_.planning_algorithm;
 
-  // initialize specified algorithm
+  // initialize specified algorithm using struct-based constructors so this function
+  // can be called more than once (e.g. from onSetParameters) without re-declaring params.
   if (algo_name == "astar") {
-    algo_ = std::make_unique<AstarSearch>(planner_common_param, extended_vehicle_shape, *this);
+    AstarParam astar_param;
+    astar_param.search_method = get_parameter("astar.search_method").as_string();
+    astar_param.only_behind_solutions = get_parameter("astar.only_behind_solutions").as_bool();
+    astar_param.use_back = get_parameter("astar.use_back").as_bool();
+    astar_param.adapt_expansion_distance = get_parameter("astar.adapt_expansion_distance").as_bool();
+    astar_param.expansion_distance = get_parameter("astar.expansion_distance").as_double();
+    astar_param.near_goal_distance = get_parameter("astar.near_goal_distance").as_double();
+    astar_param.distance_heuristic_weight = get_parameter("astar.distance_heuristic_weight").as_double();
+    astar_param.smoothness_weight = get_parameter("astar.smoothness_weight").as_double();
+    astar_param.obstacle_distance_weight = get_parameter("astar.obstacle_distance_weight").as_double();
+    astar_param.goal_lat_distance_weight = get_parameter("astar.goal_lat_distance_weight").as_double();
+    algo_ = std::make_unique<AstarSearch>(planner_common_param, extended_vehicle_shape, astar_param, get_clock());
   } else if (algo_name == "rrtstar") {
-    algo_ = std::make_unique<RRTStar>(planner_common_param, extended_vehicle_shape, *this);
+    RRTStarParam rrtstar_param;
+    rrtstar_param.enable_update = get_parameter("rrtstar.enable_update").as_bool();
+    rrtstar_param.use_informed_sampling = get_parameter("rrtstar.use_informed_sampling").as_bool();
+    rrtstar_param.max_planning_time = get_parameter("rrtstar.max_planning_time").as_double();
+    rrtstar_param.neighbor_radius = get_parameter("rrtstar.neighbor_radius").as_double();
+    rrtstar_param.margin = get_parameter("rrtstar.margin").as_double();
+    algo_ = std::make_unique<RRTStar>(planner_common_param, extended_vehicle_shape, rrtstar_param, get_clock());
   } else {
     throw std::runtime_error("No such algorithm named " + algo_name + " exists.");
   }

@@ -72,6 +72,21 @@
           "default": 10.0,
           "description": "Maximum ego speed [m/s] at which the planner is allowed to generate a new trajectory. Replanning is skipped above this threshold."
         },
+        "use_path_distance_cost": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the reference-path attraction cost layer. When true, A* adds a cost proportional to free-space distance from the reference path, encouraging the vehicle to stay near it."
+        },
+        "path_distance_weight": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Weight for the path distance cost term: cost += weight * free_space_distance_to_path [m]. Higher values pull the planned path closer to the reference path."
+        },
+        "path_distance_viz_cap": {
+          "type": "number",
+          "default": 5.0,
+          "description": "Distance [m] that maps to full cost (99) in the debug costmap visualization. Does not affect planning; only scales the visual gradient."
+        },
         "time_limit": {
           "type": "number",
           "default": 30000.0,
@@ -242,6 +257,9 @@
         "replan_when_course_out",
         "path_lookup_distance",
         "max_planning_velocity",
+        "use_path_distance_cost",
+        "path_distance_weight",
+        "path_distance_viz_cap",
         "time_limit",
         "max_turning_ratio",
         "turning_steps",
