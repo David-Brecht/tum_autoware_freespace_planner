@@ -21,7 +21,6 @@ max_turning_ratio: 0.8
 obstacle_threshold: 100
 path_distance_viz_cap: 5.0
 path_distance_weight: 3.0
-path_lookup_distance: 20.0
 planning_algorithm: astar
 qos_overrides./parameter_events.publisher.depth: 1000
 qos_overrides./parameter_events.publisher.durability: volatile
@@ -46,6 +45,10 @@ theta_size: 120
 time_limit: 30000.0
 turning_steps: 2
 update_rate: 10.0
+sampling_end_m: 45.1
+sampling_start_m: 8.0
+sampling_step_m: 10.0
+stuck_replan_time_sec: 3.0
 use_path_distance_cost: true
 use_sim_time: false
 vehicle_height: 2.5

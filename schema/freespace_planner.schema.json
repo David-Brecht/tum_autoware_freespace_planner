@@ -62,15 +62,30 @@
           "default": true,
           "description": "Replan path when the vehicle deviates from its course."
         },
-        "path_lookup_distance": {
-          "type": "number",
-          "default": 30.0,
-          "description": "Distance ahead along the reference path used as the rolling goal for the planner [m]."
-        },
         "max_planning_velocity": {
           "type": "number",
           "default": 10.0,
           "description": "Maximum ego speed [m/s] at which the planner is allowed to generate a new trajectory. Replanning is skipped above this threshold."
+        },
+        "sampling_start_m": {
+          "type": "number",
+          "default": 8.0,
+          "description": "Nearest sampled goal distance from ego [m]. Should exceed vehicle length to avoid collision rejection."
+        },
+        "sampling_step_m": {
+          "type": "number",
+          "default": 10.0,
+          "description": "Distance between successive goal samples along the reference path [m]."
+        },
+        "sampling_end_m": {
+          "type": "number",
+          "default": 45.1,
+          "description": "Farthest sampled goal distance [m]. Combined with sampling_start_m and sampling_step_m this determines the candidate count."
+        },
+        "stuck_replan_time_sec": {
+          "type": "number",
+          "default": 3.0,
+          "description": "If the vehicle remains stopped this many seconds while in LOCKED mode, revert to sampling mode so the operator can re-choose."
         },
         "use_path_distance_cost": {
           "type": "boolean",
@@ -255,8 +270,11 @@
         "vehicle_shape_margin_m",
         "replan_when_obstacle_found",
         "replan_when_course_out",
-        "path_lookup_distance",
         "max_planning_velocity",
+        "sampling_start_m",
+        "sampling_step_m",
+        "sampling_end_m",
+        "stuck_replan_time_sec",
         "use_path_distance_cost",
         "path_distance_weight",
         "path_distance_viz_cap",

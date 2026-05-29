@@ -36,10 +36,12 @@
 #include <autoware/freespace_planning_algorithms/astar_search.hpp>
 #include <autoware/freespace_planning_algorithms/rrtstar.hpp>
 #include <autoware_utils/ros/polling_subscriber.hpp>
+#include <autoware_utils_uuid/uuid_helper.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <autoware_internal_debug_msgs/msg/float64_stamped.hpp>
+#include <autoware_internal_planning_msgs/msg/candidate_trajectories.hpp>
 #include <autoware_planning_msgs/msg/path.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -47,15 +49,20 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/int8.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <unique_identifier_msgs/msg/uuid.hpp>
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
 #include <deque>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 class TestFreespacePlanner;
@@ -69,6 +76,9 @@ using autoware::freespace_planning_algorithms::PlannerCommonParam;
 using autoware::freespace_planning_algorithms::RRTStar;
 using autoware::freespace_planning_algorithms::RRTStarParam;
 using autoware::freespace_planning_algorithms::VehicleShape;
+using autoware_internal_planning_msgs::msg::CandidateTrajectories;
+using autoware_internal_planning_msgs::msg::CandidateTrajectory;
+using autoware_internal_planning_msgs::msg::GeneratorInfo;
 using autoware_planning_msgs::msg::Path;
 using autoware_planning_msgs::msg::Trajectory;
 using geometry_msgs::msg::PoseArray;
@@ -77,6 +87,7 @@ using geometry_msgs::msg::TransformStamped;
 using geometry_msgs::msg::Twist;
 using nav_msgs::msg::OccupancyGrid;
 using nav_msgs::msg::Odometry;
+using unique_identifier_msgs::msg::UUID;
 
 struct NodeParam
 {
@@ -91,11 +102,22 @@ struct NodeParam
   double vehicle_shape_margin_m;
   bool replan_when_obstacle_found;
   bool replan_when_course_out;
-  double path_lookup_distance;       // distance ahead along the reference path used as goal [m]
   double max_planning_velocity;      // plan only when ego speed is below this threshold [m/s]
   bool use_path_distance_cost;       // enable reference-path attraction cost layer
   double path_distance_weight;       // weight for path distance cost (linear: weight * dist_m)
   double path_distance_viz_cap;      // distance [m] that maps to full cost in the debug costmap
+  double sampling_start_m;           // nearest sampled goal distance [m]
+  double sampling_step_m;            // step between goal samples [m]
+  double sampling_end_m;             // farthest sampled goal distance [m]
+  double stuck_replan_time_sec;      // seconds stopped before reverting LOCKED→SAMPLING
+};
+
+// One planning result: the goal distance used and the resulting trajectory.
+struct CandidateEntry
+{
+  double goal_distance_m;
+  double path_length_m;   // arc length for display
+  Trajectory trajectory;
 };
 
 class FreespacePlannerNode : public rclcpp::Node
@@ -104,7 +126,7 @@ public:
   explicit FreespacePlannerNode(const rclcpp::NodeOptions & node_options);
 
 private:
-  // ros
+  // ── Publishers ──────────────────────────────────────────────────────────
   rclcpp::Publisher<Trajectory>::SharedPtr trajectory_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_pose_array_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_partial_pose_array_pub_;
@@ -112,8 +134,11 @@ private:
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
     processing_time_pub_;
   rclcpp::Publisher<OccupancyGrid>::SharedPtr debug_obstacle_cost_pub_;
+  rclcpp::Publisher<CandidateTrajectories>::SharedPtr candidate_trajectories_pub_;
 
+  // ── Subscribers ─────────────────────────────────────────────────────────
   rclcpp::Subscription<Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr trajectory_select_sub_;
 
   autoware_utils::InterProcessPollingSubscriber<OccupancyGrid> occupancy_grid_sub_{
     this, "~/input/occupancy_grid"};
@@ -125,14 +150,13 @@ private:
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-  // params
+  // ── Params ──────────────────────────────────────────────────────────────
   NodeParam node_param_;
   VehicleShape vehicle_shape_;
 
-  // variables
+  // ── Planning state ──────────────────────────────────────────────────────
   std::unique_ptr<AbstractPlanningAlgorithm> algo_;
   PoseStamped current_pose_;
-  PoseStamped goal_pose_;
 
   Trajectory trajectory_;
   Trajectory partial_trajectory_;
@@ -142,24 +166,34 @@ private:
   bool is_completed_ = false;
   boost::optional<rclcpp::Time> obs_found_time_;
 
+  // ── Multi-candidate state ────────────────────────────────────────────────
+  // Protects candidates_ and locked_goal_distance_m_ against concurrent
+  // access from the selection callback and the timer thread.
+  mutable std::mutex candidates_mutex_;
+  std::vector<CandidateEntry> candidates_;
+  double locked_goal_distance_m_ = -1.0;   // -1 = SAMPLING_MODE
+  boost::optional<rclcpp::Time> stuck_start_time_;
+  // Stable UUIDs per goal-distance slot so downstream consumers can track by ID across replans.
+  std::map<double, UUID> slot_uuids_;
+
+  // ── Incoming data ────────────────────────────────────────────────────────
   Path::ConstSharedPtr path_;
   OccupancyGrid::ConstSharedPtr occupancy_grid_;
   Odometry::ConstSharedPtr odom_;
 
-  std::vector<float> path_distance_map_;  // free-space distance raster from reference path (m)
-
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
+
+  // ── Path distance cost layer ─────────────────────────────────────────────
+  std::vector<float> path_distance_map_;  // free-space distance raster from reference path (m)
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr on_set_params_cb_;
 
-  // functions used in the constructor
+  // ── Internal helpers ─────────────────────────────────────────────────────
   PlannerCommonParam getPlannerCommonParam();
 
-  // functions, callback
   void onPath(const Path::ConstSharedPtr msg);
   void onOdometry(const Odometry::ConstSharedPtr msg);
-
-  PoseStamped computeGoalFromPath();
+  void onSelectTrajectory(const std_msgs::msg::Int8::SharedPtr msg);
 
   rcl_interfaces::msg::SetParametersResult onSetParameters(
     const std::vector<rclcpp::Parameter> & parameters);
@@ -167,39 +201,35 @@ private:
   void onTimer();
   void updateData();
   void reset();
-  void planTrajectory();
   void initializePlanningAlgorithm();
   bool isDataReady();
 
+  // Returns sampled goal poses: (distance_m, pose) sorted ascending by distance.
+  // In LOCKED_MODE returns only the single entry for locked_goal_distance_m_.
+  std::vector<std::pair<double, PoseStamped>> sampleGoalsFromPath();
+
+  // Runs A* for each sampled goal, populates candidates_, publishes results.
+  void planCandidateTrajectories();
+
+  // Builds and publishes the CandidateTrajectories message from candidates_.
+  void publishCandidates();
+
+  // Populates trajectory_ from the candidate matching locked_goal_distance_m_.
+  // Returns false if no matching candidate is found → reverts to SAMPLING_MODE.
+  bool activateLockedTrajectory();
+
   /**
    * @brief Checks if a new trajectory planning is required.
-   * @details A new trajectory planning is required if:
-   *           - Current trajectory points are empty, or
-   *           - Current trajectory collides with an object, or
-   *           - Ego deviates from current trajectory
-   * @return true if any of the conditions are met.
    */
   bool isPlanRequired();
 
   /**
-   * @brief Sets the target index along the current trajectory points
-   * @details if Ego is stopped AND is near the current target index along the trajectory,
-   *          then will get the next target index along the trajectory.
-   *          If the new target index is the same as the current target index, then
-   *          is_complete_ is set to true, and will publish is_completed_msg.
-   *          Otherwise will update prev_target_index_ and target_index_, to continue
-   *          following the trajectory.
+   * @brief Sets the target index along the current trajectory points.
    */
   void updateTargetIndex();
 
   /**
    * @brief Checks if current trajectory is colliding with an object.
-   * @details Will check if an obstacle exists along the current trajectory,
-   *          if there is no obstacle along the current trajectory, will reset obs_found_time_.
-   *          If an obstacle exists and the variable obs_found_time_ is not initialized,
-   *          will initialize with the current time.
-   * @return true if there is an obstacle along current trajectory, AND duration since
-   *         obs_found_time_ exceeds the parameter th_obstacle_time_sec
    */
   bool checkCurrentTrajectoryCollision();
 

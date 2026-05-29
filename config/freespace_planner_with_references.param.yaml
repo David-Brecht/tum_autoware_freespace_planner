@@ -12,8 +12,11 @@
     vehicle_shape_margin_m: 0.3           # was 0.5 - Safety padding added to all vehicle dimensions before collision checking
     replan_when_obstacle_found: true      # Enables the obstacle-on-trajectory replan trigger
     replan_when_course_out: true          # Enables the course-deviation replan trigger
-    path_lookup_distance: 30.0            # How far ahead along the reference path to look when computing the rolling goal
     max_planning_velocity: 100.0          # was 0.0 - Replanning is skipped if ego speed exceeds this
+    sampling_start_m: 8.0                 # Nearest sampled goal distance from ego [m]
+    sampling_step_m: 10.0                 # Distance between goal samples along the reference path [m]
+    sampling_end_m: 45.1                  # Farthest sampled goal distance [m]
+    stuck_replan_time_sec: 3.0            # Seconds stopped before returning from locked mode to sampling mode
     use_path_distance_cost: true          # Enable reference-path attraction cost layer in A*
     path_distance_weight: 5.0            # Weight for path attraction: cost += weight * free_space_dist_to_path [m]
     path_distance_viz_cap: 5.0           # [m] Distance that maps to full cost (99) in the debug costmap
