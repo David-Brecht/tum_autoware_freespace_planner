@@ -4,14 +4,14 @@
   <name>tum_autoware_freespace_planner</name>
   <version>0.51.0</version>
   <description>The tum_autoware_freespace_planner package</description>
-  <maintainer email="kosuke.takeuchi@tier4.jp">Kosuke Takeuchi</maintainer>
-  <maintainer email="alqudah.mohammad@tier4.jp">Alqudah Mohammad</maintainer>
+  <maintainer email="david.brecht@tum.de">David Brecht</maintainer>
   <license>Apache License 2.0</license>
 
   <author email="takamasa.horibe@tier4.jp">Takamasa Horibe</author>
   <author email="takayuki.murooka@tier4.jp">Takayuki Murooka</author>
   <author email="akihito.ohsato@tier4.jp">Akihito OHSATO</author>
   <author email="tomohito.ando@tier4.jp">Tomohito ANDO</author>
+  <author email="david.brecht@tum.de">Tomohito ANDO</author>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
   <buildtool_depend>autoware_cmake</buildtool_depend>
@@ -33,6 +33,7 @@
   <depend>tf2_ros</depend>
   <depend>tier4_planning_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>rosbag2_cpp</depend>
 
   <test_depend>ament_cmake_ros</test_depend>
   <test_depend>ament_lint_auto</test_depend>
