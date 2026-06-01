@@ -1,13 +1,21 @@
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <matplot/matplot.h>
+
 #include "autoware/freespace_planning_algorithms/abstract_algorithm.hpp"
 #include <autoware/freespace_planning_algorithms/rrtstar.hpp>
 #include "autoware/freespace_planning_algorithms/astar_search.hpp"
 
+#include "costmap_visualization.hpp"
 #include "rosbag_loader.hpp"
+
+// todo make a ROS parameter later
+// But then again there might be some vehicle blocking 
+float kDistanceFromBoundary = 7.0;
 
 autoware::freespace_planning_algorithms::PlannerCommonParam planner_common_params {
   // base configs
@@ -54,9 +62,17 @@ struct PathPoint {
   float cumulative_distance = 0.0f;
 };
 
-geometry_msgs::msg::Pose get_goal_pose(const autoware_planning_msgs::msg::Path & path, const nav_msgs::msg::OccupancyGrid & occupancy_grid) {
-  std::vector<PathPoint> path_points;  
- 
+geometry_msgs::msg::Pose get_goal_pose(
+  const autoware_planning_msgs::msg::Path & path,
+  const nav_msgs::msg::OccupancyGrid & occupancy_grid,
+  const geometry_msgs::msg::Pose & start_pose)
+{
+  if (path.points.empty()) {
+    return start_pose;
+  }
+
+  std::vector<PathPoint> path_points;
+
   PathPoint first_point;
   first_point.pose = path.points.at(0).pose;
   first_point.cumulative_distance = 0.0f;
@@ -75,14 +91,50 @@ geometry_msgs::msg::Pose get_goal_pose(const autoware_planning_msgs::msg::Path &
     PathPoint point;
     point.pose = path.points.at(idx).pose;
     point.cumulative_distance = cumulative_distance;
+    path_points.push_back(point);
   }
 
-  // Get the pose with the minimum distance to the grid
-  geometry_msgs::msg::Pose pose;
-  return pose;
+  const auto x_min = static_cast<float>(occupancy_grid.info.origin.position.x);
+  const auto y_min = static_cast<float>(occupancy_grid.info.origin.position.y);
+  const float x_max = x_min + static_cast<float>(occupancy_grid.info.width) * occupancy_grid.info.resolution;
+  const float y_max = y_min + static_cast<float>(occupancy_grid.info.height) * occupancy_grid.info.resolution;
+
+  auto is_outside_grid = [&](const PathPoint & pp) {
+    return pp.pose.position.x < x_min || pp.pose.position.x >= x_max ||
+           pp.pose.position.y < y_min || pp.pose.position.y >= y_max;
+  };
+
+  auto nearest_it = std::min_element(path_points.begin(), path_points.end(),
+    [&](const PathPoint & a, const PathPoint & b) {
+      auto dist_sq = [&](const PathPoint & pp) {
+        auto dx = static_cast<float>(pp.pose.position.x - start_pose.position.x);
+        auto dy = static_cast<float>(pp.pose.position.y - start_pose.position.y);
+        return dx * dx + dy * dy;
+      };
+      return dist_sq(a) < dist_sq(b);
+    });
+
+  auto exit_it = std::find_if(nearest_it, path_points.end(), is_outside_grid);
+
+  if (exit_it == path_points.end()) {
+    return path_points.back().pose;
+  }
+
+  const float target_dist = exit_it->cumulative_distance - kDistanceFromBoundary;
+
+  if (target_dist <= 0.0f) {
+    return path_points.front().pose;
+  }
+
+  auto goal_it = std::lower_bound(path_points.begin(), exit_it, target_dist,
+    [](const PathPoint & pp, float dist) { return pp.cumulative_distance < dist; });
+
+  return goal_it->pose;
 }
 
 int main(int argc, char ** argv){
+  (void) argc;
+  (void) argv;
   // std::cout << "number of argc: " << argc << std::endl;
   // for (int idx = 0; idx < argc; ++idx){ 
   //   std::cout << "string of argv: " << argv[idx] << std::endl;
@@ -103,8 +155,12 @@ int main(int argc, char ** argv){
   geometry_msgs::msg::Pose start_pose = bag_data.odometry.pose.pose;
   
   // TODO - find out the goal pose through interception of path and gridmap
-  geometry_msgs::msg::Pose goal_pose = get_goal_pose(bag_data.path, bag_data.occupancy_grid);
+  geometry_msgs::msg::Pose goal_pose = get_goal_pose(bag_data.path, bag_data.occupancy_grid, start_pose);
   
+  std::cout << "start pose x: " << start_pose.position.x << std::endl;
+  std::cout << "start pose y: " << start_pose.position.y << std::endl;
+  std::cout << "goal pose x:  " << goal_pose.position.x << std::endl;
+  std::cout << "goal pose y:  " << goal_pose.position.y << std::endl;
 
   planner->makePlan(start_pose, goal_pose);
   auto waypoints = planner->getWaypoints();
@@ -112,9 +168,11 @@ int main(int argc, char ** argv){
   int idx = 0;
 
   for (const auto & waypoint : waypoints.waypoints) {
-    std::cout << "waypoint no " << idx << ": x: " << waypoint.pose.position.x << " y: " << waypoint.pose.position.y << std::endl;
+    std::cout << "waypoint no " << idx << ": x: " << waypoint.pose.pose.position.x << " y: " << waypoint.pose.pose.position.y << std::endl;
     ++idx;
   } 
+
+  plot_planning_result(bag_data.occupancy_grid, start_pose, goal_pose, waypoints, collision_vehicle_shape);
 
   return 0;
 }
