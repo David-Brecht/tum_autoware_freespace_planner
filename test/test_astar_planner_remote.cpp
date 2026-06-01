@@ -165,14 +165,13 @@ int main(int argc, char ** argv){
   planner->makePlan(start_pose, goal_pose);
   auto waypoints = planner->getWaypoints();
 
-  int idx = 0;
-
+  std::vector<geometry_msgs::msg::Pose> intermediate_poses;
   for (const auto & waypoint : waypoints.waypoints) {
-    std::cout << "waypoint no " << idx << ": x: " << waypoint.pose.pose.position.x << " y: " << waypoint.pose.pose.position.y << std::endl;
-    ++idx;
-  } 
+    geometry_msgs::msg::Pose pose = waypoint.pose.pose;
+    intermediate_poses.push_back(pose);  
+  }
 
-  plot_planning_result(bag_data.occupancy_grid, start_pose, goal_pose, waypoints, collision_vehicle_shape);
+  plot_planning_result(bag_data.occupancy_grid, start_pose, goal_pose, intermediate_poses, collision_vehicle_shape);
 
   return 0;
 }
