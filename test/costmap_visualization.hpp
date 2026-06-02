@@ -1,5 +1,6 @@
 #pragma once
 
+#include "matplot/core/figure_registry.h"
 #include "matplot/matplot.h"
 
 #include <autoware/freespace_planning_algorithms/abstract_algorithm.hpp>
@@ -20,6 +21,7 @@ void plot_planning_result(
   const std::string & output_path = "/workspace/data/planning_result.pdf")
 {
   (void)collision_vehicle_shape;
+  (void)output_path;
 
   const int width = static_cast<int>(occupancy_grid.info.width);
   const int height = static_cast<int>(occupancy_grid.info.height);
@@ -48,12 +50,6 @@ void plot_planning_result(
   const double min_y = origin_y;
   const double max_y = origin_y + static_cast<double>(height) * resolution;
 
-  // constexpr int fig_h = 1800;
-  // constexpr int fig_w = static_cast<int>(fig_h * 0.815f / 0.775f);  // = 1893
-  // auto fig = matplot::figure(true);
-  // fig->size(fig_w, fig_h);
-
-  // Correct overload for your Matplot++ version
   matplot::image(min_x, max_x, min_y, max_y, grid_2d, true);
   matplot::gca()->y_axis().reverse(false);
 
@@ -116,7 +112,11 @@ void plot_planning_result(
   matplot::ylabel("y [m]");
   matplot::title("Freespace planning result");
 
-  // matplot::axis(matplot::equal);
+  matplot::gcf()->size(1000, 1000);
 
-  matplot::save(output_path);
+  matplot::axis(matplot::equal);
+
+  // matplot::save(output_path);
+  matplot::show();
 }
+
