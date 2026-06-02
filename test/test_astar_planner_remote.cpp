@@ -148,26 +148,21 @@ int main(int argc, char ** argv){
     a_star_params, 
     ros_clock);
 
-  BagData bag_data = load_data_from_mcap("/workspace/snapshot_20260601_164941/snapshot_20260601_164941_0.mcap");
+  BagData bag_data = load_data_from_mcap("/workspace/snapshot_20260602_125319/snapshot_20260602_125319_0.mcap");
   
   planner->setMap(bag_data.occupancy_grid);
 
   geometry_msgs::msg::Pose start_pose = bag_data.odometry.pose.pose;
   
-  // TODO - find out the goal pose through interception of path and gridmap
   geometry_msgs::msg::Pose goal_pose = get_goal_pose(bag_data.path, bag_data.occupancy_grid, start_pose);
   
-  std::cout << "start pose x: " << start_pose.position.x << std::endl;
-  std::cout << "start pose y: " << start_pose.position.y << std::endl;
-  std::cout << "goal pose x:  " << goal_pose.position.x << std::endl;
-  std::cout << "goal pose y:  " << goal_pose.position.y << std::endl;
-
   planner->makePlan(start_pose, goal_pose);
   auto waypoints = planner->getWaypoints();
 
   std::vector<geometry_msgs::msg::Pose> intermediate_poses;
   for (const auto & waypoint : waypoints.waypoints) {
     geometry_msgs::msg::Pose pose = waypoint.pose.pose;
+    std::cout << "waypoint x " << waypoint.pose.pose.position.x << " y " << waypoint.pose.pose.position.y << " w " << waypoint.pose.pose.orientation.w << std::endl;
     intermediate_poses.push_back(pose);  
   }
 
