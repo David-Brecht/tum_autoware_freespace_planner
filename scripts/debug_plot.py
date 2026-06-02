@@ -52,7 +52,7 @@ class ProblemDescription:
     @classmethod
     def from_rosbag_path(cls, path: str) -> "ProblemDescription":
         # ref: rosbag2/rosbag2_py/test/test_sequential_reader.py
-        storage_options, converter_options = cls.get_rosbag_options(bag_path)
+        storage_options, converter_options = cls.get_rosbag_options(path)
         reader = rosbag2_py.SequentialReader()
         reader.open(storage_options, converter_options)
         topic_types = reader.get_all_topics_and_types()
@@ -70,7 +70,7 @@ class ProblemDescription:
             msg = deserialize_message(data, msg_type)
             message_map[topic] = msg
 
-        return cls(**message_map)
+        return cls(**{k: v for k, v in message_map.items() if k in cls.__dataclass_fields__})
 
     @staticmethod
     def get_rosbag_options(path: str, serialization_format="cdr"):
@@ -165,31 +165,28 @@ def plot_problem(pd: ProblemDescription, ax, meta_info):
 
     ax.pcolormesh(X, Y, arr, cmap="Greys", shading="flat", rasterized=True)
 
-    corners_x = [ox,
-                 ox + cos_yaw * n_grid[0] * res,
-                 ox - sin_yaw * n_grid[1] * res,
-                 ox + cos_yaw * n_grid[0] * res - sin_yaw * n_grid[1] * res]
-    corners_y = [oy,
-                 oy + sin_yaw * n_grid[0] * res,
-                 oy + cos_yaw * n_grid[1] * res,
-                 oy + sin_yaw * n_grid[0] * res + cos_yaw * n_grid[1] * res]
-    b_min = np.array([min(corners_x), min(corners_y)])
-    b_max = np.array([max(corners_x), max(corners_y)])
-
     vehicle_model = VehicleModel.from_problem_description(pd)
-    vehicle_model.plot_pose(pd.start, ax, "green", 2)
-    vehicle_model.plot_pose(pd.goal, ax, "red", 2)
+    vehicle_model.plot_pose(pd.start, ax, "green", 4)
+    vehicle_model.plot_pose(pd.goal, ax, "red", 4)
 
     for pose in pd.trajectory.poses:
         vehicle_model.plot_pose(pose, ax, "blue", 0.5)
 
-    text = "elapsed : {0} [msec]".format(int(round(pd.elapsed_time.data)))
-    ax.text(b_min[0] + 0.3, b_min[1] + 0.3, text, fontsize=15, color="red")
-    ax.text(b_min[0] + 0.3, b_max[1] - 1.5, meta_info, fontsize=15, color="red")
+    # Zoom to a square bounding box around start, goal, and trajectory.
+    key_poses = [pd.start, pd.goal] + list(pd.trajectory.poses)
+    xs = [p.position.x for p in key_poses]
+    ys = [p.position.y for p in key_poses]
+    margin = max(vehicle_model.length, vehicle_model.width) * 2
+    cx = (min(xs) + max(xs)) / 2
+    cy = (min(ys) + max(ys)) / 2
+    half_span = max((max(xs) - min(xs)) / 2, (max(ys) - min(ys)) / 2) + margin
 
-    ax.axis("equal")
-    ax.set_xlim([b_min[0], b_max[0]])
-    ax.set_ylim([b_min[1], b_max[1]])
+    ax.set_aspect("equal")
+    ax.set_xlim([cx - half_span, cx + half_span])
+    ax.set_ylim([cy - half_span, cy + half_span])
+
+    elapsed_ms = int(round(pd.elapsed_time.data))
+    ax.set_title("{} | elapsed: {} ms".format(meta_info, elapsed_ms), color="black")
 
 
 def create_concat_png(src_list, dest, is_horizontal):
@@ -204,49 +201,21 @@ def create_concat_png(src_list, dest, is_horizontal):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--concat", action="store_true", help="concat png images (requires imagemagick)")
-    parser.add_argument("--bag-path", default="/workspace", help="the path to the rosbag containing all information for plotting")
+    parser.add_argument("--input-path", default="/workspace", help="the path to the rosbag containing all information for plotting")
+    parser.add_argument("--output-path", default="/workspace/output", help="the path to the rosbag containing all information for plotting")
     args = parser.parse_args()
+    # print(args)
     concat = args.concat
-    bag_path = args.bag_path
+    input_path = args.input_path
+    output_path = args.output_path
 
-    # dir_name_table: Dict[Tuple[str, int], str] = {}
-    # print(dir_name_table)
-    # # cspell: ignore fpalgos, cand
-    # prefix = "fpalgos"
-    # for cand_dir in os.listdir("/tmp"):
-    #     if cand_dir.startswith(prefix):
-    #         m = re.match(r"{}-(\w+)-case([0-9])".format(prefix), cand_dir)
-    #         assert m is not None
-    #         algo_name = m.group(1)
-    #         case_number = int(m.group(2))
-    #         dir_name_table[(algo_name, case_number)] = cand_dir
-
-    # algo_names = sorted({key[0] for key in dir_name_table.keys()})
-    # case_indices = sorted({key[1] for key in dir_name_table.keys()})
-    # n_algo = len(algo_names)
-    # n_case = len(case_indices)
-
-    # TODO make work with the current setup 
-    # for i in range(n_algo):
-    #     algo_name = algo_names[i]
-    #     algo_png_images = []
-    #     for j in range(n_case):
     fig, ax = plt.subplots()
-
-    #         result_dir = dir_name_table[(algo_name, j)]
-    #         bag_path = os.path.join("/tmp", result_dir)
-
-    pd = ProblemDescription.from_rosbag_path(bag_path)
+    pd = ProblemDescription.from_rosbag_path(os.path.join(input_path))
 
     meta_info = "test"
     plot_problem(pd, ax, meta_info)
     fig.tight_layout()
 
-    file_name = os.path.join("/workspace/output", "plot_.pdf")
-    # algo_png_images.append(file_name)
+    file_name = os.path.join(output_path, "plot.pdf")
     plt.savefig(file_name)
     print("saved to {}".format(file_name))
-
-    # algo_summary_file = os.path.join("/workspace/output", "summary-{}.png".format(algo_name))
-    #     if concat:
-    #         create_concat_png(algo_png_images, algo_summary_file, True)
