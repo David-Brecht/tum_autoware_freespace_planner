@@ -6,17 +6,17 @@
 
 PlannerCommonParam:
   # Base configs
-  - time_limit: 30000                   # planning time limit [msec]
+  - time_limit: 300                   # planning time limit [msec]
   # Search configs
-  - theta_size: 120                     # discretized angle table size [-]
-  - curve_weight: 0.5                   # curve moving cost [-]
+  - theta_size: 120                     # was 120 - discretized angle table size [-]
+  - curve_weight: [0.5]                   # curve moving cost [-]
   - reverse_weight: 0.7                 # backward moving cost [-]
   - direction_change_weight: 2.0        # direction change cost [-]
-  - lateral_goal_range: 0.5             # reaching threshold, lateral error [m]
+  - lateral_goal_range: 0.4             # reaching threshold, lateral error [m]
   - longitudinal_goal_range: 1.0        # reaching threshold, longitudinal error [m]
   - angle_goal_range: 0.5               # reaching threshold, angle error [deg]
-  - max_turning_ratio: [0.7, 1.0]              # factor of max turning range to use [-]
-  - turning_steps: [1, 3]                    # number of turning steps [-]
+  - max_turning_ratio: [0.7]              # factor of max turning range to use [-]
+  - turning_steps: [1]                    # number of turning steps [-]
   # Costmap configs
   - obstacle_threshold: 100       # obstacle threshold on grid [-]
 
@@ -29,9 +29,9 @@ AstarParam:
   - expansion_distance: 0.5 
   - near_goal_distance: 3.0 
   # Search configs
-  - distance_heuristic_weight: 2.0      # obstacle threshold on grid [0,255]
-  - smoothness_weight: [0.7] # prob 0.7 ... 0.9
-  - obstacle_distance_weight: 1.75 
+  - distance_heuristic_weight: [2.0, 5.0]      # obstacle threshold on grid [0,255]
+  - smoothness_weight: [0.5, 0.7] # prob 0.7 ... 0.9
+  - obstacle_distance_weight: [1.75] 
   - goal_lat_distance_weight: 5.0 
 
 # Shape of the vehicle (EDGAR)
