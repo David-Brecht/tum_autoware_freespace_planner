@@ -25,11 +25,13 @@ import os
 import re
 import subprocess
 from typing import Dict
+from typing import List
 from typing import Tuple
 
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import PoseArray
 import matplotlib.pyplot as plt
+from matplotlib.widgets import CheckButtons
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
 from rclpy.serialization import deserialize_message
@@ -110,14 +112,16 @@ class VehicleModel:
         vertices_global = vertices_local.dot(R_mat.T) + np.array([x, y])
         return vertices_global
 
-    def plot_pose(self, pose: Pose, ax, color="black", lw=1):
+    def plot_pose(self, pose: Pose, ax, color="black", lw=1) -> List:
         x = pose.position.x
         y = pose.position.y
         V = self.get_vertices(pose)
-        ax.scatter(x, y, c=color, s=2)
+        artists = [ax.scatter(x, y, color=color, s=2)]
         for idx_pair in [[0, 1], [1, 2], [2, 3], [3, 0]]:
             i, j = idx_pair
-            ax.plot([V[i, 0], V[j, 0]], [V[i, 1], V[j, 1]], color=color, linewidth=lw)
+            line, = ax.plot([V[i, 0], V[j, 0]], [V[i, 1], V[j, 1]], color=color, linewidth=lw)
+            artists.append(line)
+        return artists
 
     @staticmethod
     def euler_from_quaternion(quaternion):
@@ -144,7 +148,7 @@ class VehicleModel:
         return pose_msg.position.x, pose_msg.position.y, yaw
 
 
-def plot_problem(pd: ProblemDescription, ax, meta_info):
+def plot_problem(pd: ProblemDescription, ax, meta_info) -> Dict[str, List]:
     info = pd.costmap.info
     n_grid = np.array([info.width, info.height])
     res = info.resolution
@@ -163,14 +167,20 @@ def plot_problem(pd: ProblemDescription, ax, meta_info):
     X = cos_yaw * C - sin_yaw * R + ox
     Y = sin_yaw * C + cos_yaw * R + oy
 
-    ax.pcolormesh(X, Y, arr, cmap="Greys", shading="flat", rasterized=True)
+    mesh = ax.pcolormesh(X, Y, arr, cmap="Greys", shading="flat", rasterized=True)
 
     vehicle_model = VehicleModel.from_problem_description(pd)
-    vehicle_model.plot_pose(pd.start, ax, "green", 4)
-    vehicle_model.plot_pose(pd.goal, ax, "red", 4)
+    start_artists = vehicle_model.plot_pose(pd.start, ax, "green", 4)
+    goal_artists = vehicle_model.plot_pose(pd.goal, ax, "red", 4)
 
-    for pose in pd.trajectory.poses:
-        vehicle_model.plot_pose(pose, ax, "blue", 0.5)
+    traj_artists = []
+    n_poses = len(pd.trajectory.poses)
+    dark_blue = np.array([0.08, 0.20, 0.78])
+    light_blue = np.array([0.55, 0.75, 1.00])
+    for i, pose in enumerate(pd.trajectory.poses):
+        t = i / max(n_poses - 1, 1)
+        color = tuple(dark_blue + (light_blue - dark_blue) * t)
+        traj_artists.extend(vehicle_model.plot_pose(pose, ax, color, 0.5))
 
     # Zoom to a square bounding box around start, goal, and trajectory.
     key_poses = [pd.start, pd.goal] + list(pd.trajectory.poses)
@@ -188,6 +198,13 @@ def plot_problem(pd: ProblemDescription, ax, meta_info):
     elapsed_ms = int(round(pd.elapsed_time.data))
     ax.set_title("{} | elapsed: {} ms".format(meta_info, elapsed_ms), color="black")
 
+    return {
+        "Costmap": [mesh],
+        "Start (green)": start_artists,
+        "Goal (red)": goal_artists,
+        "Trajectory (blue)": traj_artists,
+    }
+
 
 def create_concat_png(src_list, dest, is_horizontal):
     opt = "+append" if is_horizontal else "-append"
@@ -203,19 +220,42 @@ if __name__ == "__main__":
     parser.add_argument("--concat", action="store_true", help="concat png images (requires imagemagick)")
     parser.add_argument("--input-path", default="/workspace", help="the path to the rosbag containing all information for plotting")
     parser.add_argument("--output-path", default="/workspace/output", help="the path to the rosbag containing all information for plotting")
+    parser.add_argument("--interactive", action="store_true", help="open interactive window with layer toggles instead of saving to PDF")
     args = parser.parse_args()
-    # print(args)
     concat = args.concat
     input_path = args.input_path
     output_path = args.output_path
 
-    fig, ax = plt.subplots()
     pd = ProblemDescription.from_rosbag_path(os.path.join(input_path))
-
     meta_info = "test"
-    plot_problem(pd, ax, meta_info)
-    fig.tight_layout()
 
-    file_name = os.path.join(output_path, "plot.pdf")
-    plt.savefig(file_name)
-    print("saved to {}".format(file_name))
+    if args.interactive:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        fig.subplots_adjust(right=0.78)
+
+        groups = plot_problem(pd, ax, meta_info)
+
+        labels = list(groups.keys())
+        check_ax = fig.add_axes([0.80, 0.35, 0.18, 0.3])
+        check = CheckButtons(check_ax, labels, actives=[True] * len(labels))
+
+        def on_toggle(label):
+            for artist in groups[label]:
+                artist.set_visible(not artist.get_visible())
+            fig.canvas.draw_idle()
+
+        check.on_clicked(on_toggle)
+
+        file_name = os.path.join(output_path, "plot.pdf")
+        plt.savefig(file_name)
+        print("saved to {}".format(file_name))
+
+        plt.show()
+    else:
+        fig, ax = plt.subplots()
+        plot_problem(pd, ax, meta_info)
+        fig.tight_layout()
+
+        file_name = os.path.join(output_path, "plot.pdf")
+        plt.savefig(file_name)
+        print("saved to {}".format(file_name))

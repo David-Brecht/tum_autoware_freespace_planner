@@ -1,0 +1,40 @@
+###################################################################################
+### Param file for tuning the a star planner.                                   ### 
+### Want to try different configurations? just specify them as vector, e.g.     ###
+### PlannerCommonParam.theta_size: [120, 200]                                   ###
+####################################################################################
+
+# Base configs
+PlannerCommonParam.time_limit: 30000               # planning time limit [msec]
+# Search configs
+PlannerCommonParam.theta_size: [120, 200]          # discretized angle table size [-]
+PlannerCommonParam.curve_weight: 0.5               # curve moving cost [-]
+PlannerCommonParam.reverse_weight: 0.7             # backward moving cost [-]
+PlannerCommonParam.direction_change_weight: 2.0    # direction change cost [-]
+PlannerCommonParam.lateral_goal_range: 0.5         # reaching threshold, lateral error [m]
+PlannerCommonParam.longitudinal_goal_range: 1.0    # reaching threshold, longitudinal error [m]
+PlannerCommonParam.angle_goal_range: 6.0           # reaching threshold, angle error [deg]
+PlannerCommonParam.max_turning_ratio: 0.7          # factor of max turning range to use [-]
+PlannerCommonParam.turning_steps: 1                # number of turning steps [-]
+# Costmap configs
+PlannerCommonParam.obstacle_threshold: [100, 200]  # obstacle threshold on grid [-]
+
+# Base configs
+AstarParam.search_method: "forward" 
+AstarParam.only_behind_solutions: false            # solutions should be behind the goal
+AstarParam.use_back: true                          # backward search
+AstarParam.adapt_expansion_distance: true 
+AstarParam.expansion_distance: 0.5 
+AstarParam.near_goal_distance: 3.0 
+# Search configs
+AstarParam.distance_heuristic_weight: 2.0          # obstacle threshold on grid [0,255]
+AstarParam.smoothness_weight: 0.5 
+AstarParam.obstacle_distance_weight: 1.75 
+AstarParam.goal_lat_distance_weight: 5.0 
+
+# Shape of the vehicle (EDGAR)
+VehicleShape.length: 4.973                         # X [m]
+VehicleShape.width: 2.2252                         # Y [m]
+VehicleShape.base_length: 3.124 
+VehicleShape.max_steering: 0.70 
+VehicleShape.base2back: 0.897                      # base_link to rear [m]

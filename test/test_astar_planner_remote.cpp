@@ -1,17 +1,21 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <chrono>
+#include <iostream>
+#include <string>
+#include <filesystem>
 
+#include <CLI/CLI.hpp>
 #include <rclcpp/rclcpp.hpp>
-
-#include <matplot/matplot.h>
 
 #include "autoware/freespace_planning_algorithms/abstract_algorithm.hpp"
 #include <autoware/freespace_planning_algorithms/rrtstar.hpp>
 #include "autoware/freespace_planning_algorithms/astar_search.hpp"
 
-#include "costmap_visualization.hpp"
 #include "rosbag_loader.hpp"
+#include "rosbag_writer.hpp"
+// #include "yaml_param_loader.hpp"
 
 // todo make a ROS parameter later
 // But then again there might be some vehicle blocking 
@@ -28,7 +32,7 @@ autoware::freespace_planning_algorithms::PlannerCommonParam planner_common_param
   0.5,
   1.0,
   6.0,
-  0.5,
+  0.7,
   1,
   // costmap configs
   100
@@ -133,22 +137,50 @@ geometry_msgs::msg::Pose get_goal_pose(
 }
 
 int main(int argc, char ** argv){
-  (void) argc;
-  (void) argv;
+  // (void) argc;
+  // (void) argv;
   // std::cout << "number of argc: " << argc << std::endl;
   // for (int idx = 0; idx < argc; ++idx){ 
   //   std::cout << "string of argv: " << argv[idx] << std::endl;
   // }
 
-  auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+  CLI::App app{"Standalone A star remote planner"};
+  std::string rosbag_input_path;
+  std::string yaml_param_path;
+  std::string rosbag_output_path;
+  app.add_option(
+    "-i,--input-path", 
+    rosbag_input_path, 
+    "Path to input rosbag describing the scene. Use tum_autoware_freespace_planner/scripts/ros2_snapshot_bag.py to obtain"
+  )->required();
+  app.add_option(
+    "-p,--param-path",
+    yaml_param_path,
+    "Path to a yaml file that holds the parameters of the planner. See tum_autoware_freespace_planner/test/config/planner_config.yaml for reference"
+  )->required();
+  app.add_option(
+    "-o,--output-path", 
+    rosbag_output_path, 
+    "Path to the final rosbag which can be visualized using tum_autoware_freespace_planner/scripts/debug_plot.py"
+  );
+  CLI11_PARSE(app, argc, argv);
 
+  if (rosbag_output_path.empty()) {
+    rosbag_output_path = (std::filesystem::path(rosbag_input_path) / "output").string();
+  }
+
+  // TODO - Overwrite the different params in the struct here if needed - then, loop through them
+
+  
+
+  auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
   auto planner = std::make_unique<autoware::freespace_planning_algorithms::AstarSearch>(
     planner_common_params, 
     collision_vehicle_shape, 
     a_star_params, 
     ros_clock);
 
-  BagData bag_data = load_data_from_mcap("/workspace/snapshot_20260602_125319/snapshot_20260602_125319_0.mcap");
+  BagData bag_data = load_data_from_mcap(rosbag_input_path);
   
   planner->setMap(bag_data.occupancy_grid);
 
@@ -156,17 +188,39 @@ int main(int argc, char ** argv){
   
   geometry_msgs::msg::Pose goal_pose = get_goal_pose(bag_data.path, bag_data.occupancy_grid, start_pose);
   
+  // run and time the planner
+  auto start = std::chrono::steady_clock::now();
   planner->makePlan(start_pose, goal_pose);
+  auto end = std::chrono::steady_clock::now();
+  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end-start);
+  std::cout << "time to find a solution using planner: " << elapsed_ms.count() << " ms" << std::endl;
+
   auto waypoints = planner->getWaypoints();
 
   std::vector<geometry_msgs::msg::Pose> intermediate_poses;
   for (const auto & waypoint : waypoints.waypoints) {
     geometry_msgs::msg::Pose pose = waypoint.pose.pose;
-    std::cout << "waypoint x " << waypoint.pose.pose.position.x << " y " << waypoint.pose.pose.position.y << " w " << waypoint.pose.pose.orientation.w << std::endl;
+    // std::cout << "waypoint x " << waypoint.pose.pose.position.x << " y " << waypoint.pose.pose.position.y << " w " << waypoint.pose.pose.orientation.w << std::endl;
     intermediate_poses.push_back(pose);  
   }
 
-  plot_planning_result(bag_data.occupancy_grid, start_pose, goal_pose, intermediate_poses, collision_vehicle_shape);
+  // plot_planning_result(bag_data.occupancy_grid, start_pose, goal_pose, intermediate_poses, collision_vehicle_shape);
+
+  bool success = write_data_to_mcap(
+    elapsed_ms.count(), 
+    waypoints,
+    start_pose,
+    goal_pose,
+    bag_data.occupancy_grid,
+    collision_vehicle_shape,
+    rosbag_output_path
+  );
+
+  if (success) {
+    std::cout << "Wrote data to mcap bag.\n";
+  } else {
+    std::cerr << "Could not write data to bag.\n";
+  }
 
   return 0;
 }

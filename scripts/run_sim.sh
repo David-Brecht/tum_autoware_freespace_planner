@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # give let the user define a range of paths here
-scenario_path="/workspace/scenarios/snapshot_20260602_172142" 
+scenario_path="/workspace/scenarios/snapshot_20260601_164941" 
+# scenario_path="/workspace/scenarios/snapshot_20260602_172142" 
 input_path="${scenario_path}/input"
 output_path_rosbag="${scenario_path}/output"
 output_path_plot="${scenario_path}/plot"
@@ -26,9 +27,11 @@ echo "=== Running visualization ==="
 echo "=============================" 
 python3 /workspace/src/universe/external/tum_autoware_freespace_planner/scripts/debug_plot.py \
   --input-path "${output_path_rosbag}" \
-  --output-path "${output_path_plot}" &&
+  --output-path "${output_path_plot}" \
+  --interactive &
+plot_pid=$!
 
-echo "======================" 
+echo "======================"
 echo "=== Opening output ===" 
 echo "======================" 
 evince "${output_path_plot}/plot.pdf" --fullscreen &
@@ -36,4 +39,4 @@ evince_pid=$!
 
 read -n 1 -s -r -p "Press any key to stop..."
 
-kill "$evince_pid"
+kill "$plot_pid" "$evince_pid"
