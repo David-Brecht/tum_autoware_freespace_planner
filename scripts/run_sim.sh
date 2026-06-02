@@ -6,6 +6,9 @@ input_path="${scenario_path}/input"
 output_path_rosbag="${scenario_path}/output"
 output_path_plot="${scenario_path}/plot"
 
+# The parameters for the planner
+param_path="/workspace/src/universe/external/tum_autoware_freespace_planner/test/config/planner_config.yaml"
+
 # mkdir -p "${output_path_rosbag}"
 rm -rf "${output_path_rosbag}"
 mkdir -p "${output_path_plot}"
@@ -15,6 +18,7 @@ echo "=== Running planner ==="
 echo "=======================" 
 /workspace/build/tum_autoware_freespace_planner/test_tum_autoware_freespace_planner \
   --input-path "${input_path}" \
+  --param-path "${param_path}" \
   --output-path "${output_path_rosbag}" &&
 
 echo "=============================" 
@@ -27,7 +31,7 @@ python3 /workspace/src/universe/external/tum_autoware_freespace_planner/scripts/
 echo "======================" 
 echo "=== Opening output ===" 
 echo "======================" 
-evince "${output_path_plot}/plot.pdf" &
+evince "${output_path_plot}/plot.pdf" --fullscreen &
 evince_pid=$!
 
 read -n 1 -s -r -p "Press any key to stop..."
