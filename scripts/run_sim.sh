@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # give let the user define a range of paths here
-scenario_path="/workspace/scenarios/snapshot_20260601_164941" 
-# scenario_path="/workspace/scenarios/snapshot_20260602_172142" 
+# scenario_path="/workspace/scenarios/snapshot_20260601_164941" 
+scenario_path="/workspace/scenarios/snapshot_20260602_172142" 
 input_path="${scenario_path}/input"
 output_path_rosbag="${scenario_path}/output"
 output_path_plot="${scenario_path}/plot"
