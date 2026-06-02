@@ -26,10 +26,14 @@ import re
 import subprocess
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import PoseArray
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons
 from nav_msgs.msg import OccupancyGrid
@@ -38,6 +42,9 @@ from rclpy.serialization import deserialize_message
 import rosbag2_py
 from rosidl_runtime_py.utilities import get_message
 from std_msgs.msg import Float64
+
+
+OUTPUT_PREFIX = "output_"
 
 
 @dataclass
@@ -59,15 +66,11 @@ class ProblemDescription:
         reader.open(storage_options, converter_options)
         topic_types = reader.get_all_topics_and_types()
 
-        print(topic_types)
-
         type_map = {topic_types[i].name: topic_types[i].type for i in range(len(topic_types))}
         message_map = {}
-        print(type_map)
 
         while reader.has_next():
             topic, data, t = reader.read_next()
-            print("topic", topic)
             msg_type = get_message(type_map[topic])
             msg = deserialize_message(data, msg_type)
             message_map[topic] = msg
@@ -148,7 +151,62 @@ class VehicleModel:
         return pose_msg.position.x, pose_msg.position.y, yaw
 
 
-def plot_problem(pd: ProblemDescription, ax, meta_info) -> Dict[str, List]:
+@dataclass
+class PlannerRun:
+    identifier: str
+    path: str
+    problem: ProblemDescription
+
+
+def natural_key(text: str) -> List:
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", text)]
+
+
+def is_rosbag_dir(path: str) -> bool:
+    return os.path.isdir(path) and os.path.exists(os.path.join(path, "metadata.yaml"))
+
+
+def identifier_from_output_path(path: str) -> str:
+    name = os.path.basename(os.path.normpath(path))
+    if name.startswith(OUTPUT_PREFIX):
+        return name[len(OUTPUT_PREFIX):]
+    return name
+
+
+def discover_output_bags(input_path: str) -> List[Tuple[str, str]]:
+    if is_rosbag_dir(input_path):
+        return [(identifier_from_output_path(input_path), input_path)]
+
+    search_dir = input_path
+    if not os.path.isdir(search_dir):
+        search_dir = os.path.dirname(os.path.normpath(input_path))
+
+    if os.path.basename(os.path.normpath(input_path)) == "output":
+        search_dir = os.path.dirname(os.path.normpath(input_path))
+
+    bags = []
+    for entry in os.listdir(search_dir):
+        path = os.path.join(search_dir, entry)
+        if entry.startswith(OUTPUT_PREFIX) and is_rosbag_dir(path):
+            bags.append((entry[len(OUTPUT_PREFIX):], path))
+
+    return sorted(bags, key=lambda item: natural_key(item[0]))
+
+
+def load_planner_runs(input_path: str) -> List[PlannerRun]:
+    bag_infos = discover_output_bags(input_path)
+    if not bag_infos:
+        raise RuntimeError("No output rosbag directories found for input path: {}".format(input_path))
+
+    runs = []
+    for identifier, path in bag_infos:
+        print("Loading output bag '{}' from {}".format(identifier, path))
+        runs.append(PlannerRun(identifier, path, ProblemDescription.from_rosbag_path(path)))
+
+    return runs
+
+
+def plot_costmap(pd: ProblemDescription, ax) -> List:
     info = pd.costmap.info
     n_grid = np.array([info.width, info.height])
     res = info.resolution
@@ -167,26 +225,55 @@ def plot_problem(pd: ProblemDescription, ax, meta_info) -> Dict[str, List]:
     X = cos_yaw * C - sin_yaw * R + ox
     Y = sin_yaw * C + cos_yaw * R + oy
 
-    mesh = ax.pcolormesh(X, Y, arr, cmap="Greys", shading="flat", rasterized=True)
+    return [ax.pcolormesh(X, Y, arr, cmap="Greys", shading="flat", rasterized=True)]
 
+
+def plot_start_and_goal(pd: ProblemDescription, ax) -> Dict[str, List]:
     vehicle_model = VehicleModel.from_problem_description(pd)
     start_artists = vehicle_model.plot_pose(pd.start, ax, "green", 4)
     goal_artists = vehicle_model.plot_pose(pd.goal, ax, "red", 4)
 
+    return {
+        "Start": start_artists,
+        "Goal": goal_artists,
+    }
+
+
+def plot_trajectory(pd: ProblemDescription, ax, color: str) -> List:
+    vehicle_model = VehicleModel.from_problem_description(pd)
     traj_artists = []
-    n_poses = len(pd.trajectory.poses)
-    dark_blue = np.array([0.08, 0.20, 0.78])
-    light_blue = np.array([0.55, 0.75, 1.00])
-    for i, pose in enumerate(pd.trajectory.poses):
-        t = i / max(n_poses - 1, 1)
-        color = tuple(dark_blue + (light_blue - dark_blue) * t)
+    xs = [pose.position.x for pose in pd.trajectory.poses]
+    ys = [pose.position.y for pose in pd.trajectory.poses]
+    if xs and ys:
+        line, = ax.plot(xs, ys, color=color, linewidth=2.0)
+        traj_artists.append(line)
+
+    step = max(len(pd.trajectory.poses) // 40, 1)
+    for pose in pd.trajectory.poses[::step]:
         traj_artists.extend(vehicle_model.plot_pose(pose, ax, color, 0.5))
 
+    return traj_artists
+
+
+def trajectory_color(index: int):
+    colors = plt.get_cmap("tab10").colors
+    return colors[index % len(colors)]
+
+
+def set_view_limits(runs: List[PlannerRun], ax):
     # Zoom to a square bounding box around start, goal, and trajectory.
-    key_poses = [pd.start, pd.goal] + list(pd.trajectory.poses)
+    key_poses = []
+    max_vehicle_dimension = 0.0
+    for run in runs:
+        pd = run.problem
+        vehicle_model = VehicleModel.from_problem_description(pd)
+        max_vehicle_dimension = max(max_vehicle_dimension, vehicle_model.length, vehicle_model.width)
+        key_poses.extend([pd.start, pd.goal])
+        key_poses.extend(pd.trajectory.poses)
+
     xs = [p.position.x for p in key_poses]
     ys = [p.position.y for p in key_poses]
-    margin = max(vehicle_model.length, vehicle_model.width) * 2
+    margin = max_vehicle_dimension * 2
     cx = (min(xs) + max(xs)) / 2
     cy = (min(ys) + max(ys)) / 2
     half_span = max((max(xs) - min(xs)) / 2, (max(ys) - min(ys)) / 2) + margin
@@ -195,15 +282,25 @@ def plot_problem(pd: ProblemDescription, ax, meta_info) -> Dict[str, List]:
     ax.set_xlim([cx - half_span, cx + half_span])
     ax.set_ylim([cy - half_span, cy + half_span])
 
-    elapsed_ms = int(round(pd.elapsed_time.data))
-    ax.set_title("{} | elapsed: {} ms".format(meta_info, elapsed_ms), color="black")
 
-    return {
-        "Costmap": [mesh],
-        "Start (green)": start_artists,
-        "Goal (red)": goal_artists,
-        "Trajectory (blue)": traj_artists,
+def plot_problem(runs: List[PlannerRun], ax, meta_info: Optional[str] = None) -> Dict[str, List]:
+    base_pd = runs[0].problem
+
+    groups = {
+        "Costmap": plot_costmap(base_pd, ax),
     }
+    groups.update(plot_start_and_goal(base_pd, ax))
+
+    for idx, run in enumerate(runs):
+        groups[run.identifier] = plot_trajectory(run.problem, ax, trajectory_color(idx))
+
+    set_view_limits(runs, ax)
+
+    if meta_info is None:
+        meta_info = "{} output bag{}".format(len(runs), "" if len(runs) == 1 else "s")
+    ax.set_title(meta_info, color="black")
+
+    return groups
 
 
 def create_concat_png(src_list, dest, is_horizontal):
@@ -225,19 +322,25 @@ if __name__ == "__main__":
     concat = args.concat
     input_path = args.input_path
     output_path = args.output_path
+    os.makedirs(output_path, exist_ok=True)
 
-    pd = ProblemDescription.from_rosbag_path(os.path.join(input_path))
-    meta_info = "test"
+    runs = load_planner_runs(input_path)
+    meta_info = "{} output bag{}".format(len(runs), "" if len(runs) == 1 else "s")
 
     if args.interactive:
         fig, ax = plt.subplots(figsize=(12, 8))
-        fig.subplots_adjust(right=0.78)
+        fig.subplots_adjust(right=0.66)
 
-        groups = plot_problem(pd, ax, meta_info)
+        groups = plot_problem(runs, ax, meta_info)
 
         labels = list(groups.keys())
-        check_ax = fig.add_axes([0.80, 0.35, 0.18, 0.3])
+        check_ax = fig.add_axes([0.68, 0.12, 0.30, 0.78])
         check = CheckButtons(check_ax, labels, actives=[True] * len(labels))
+        label_colors = {"Costmap": "black", "Start": "green", "Goal": "red"}
+        label_colors.update({run.identifier: trajectory_color(idx) for idx, run in enumerate(runs)})
+        for label in check.labels:
+            label.set_color(label_colors.get(label.get_text(), "black"))
+            label.set_fontsize(8)
 
         def on_toggle(label):
             for artist in groups[label]:
@@ -252,9 +355,20 @@ if __name__ == "__main__":
 
         plt.show()
     else:
-        fig, ax = plt.subplots()
-        plot_problem(pd, ax, meta_info)
-        fig.tight_layout()
+        fig, ax = plt.subplots(figsize=(12, 8))
+        fig.subplots_adjust(right=0.66)
+        groups = plot_problem(runs, ax, meta_info)
+
+        labels = list(groups.keys())
+        check_ax = fig.add_axes([0.68, 0.12, 0.30, 0.78])
+        check_ax.axis("off")
+        label_colors = {"Costmap": "black", "Start": "green", "Goal": "red"}
+        label_colors.update({run.identifier: trajectory_color(idx) for idx, run in enumerate(runs)})
+        for idx, label in enumerate(labels):
+            y = 1.0 - idx * 0.055
+            if y < 0:
+                break
+            check_ax.text(0.0, y, label, fontsize=8, va="top", color=label_colors.get(label, "black"))
 
         file_name = os.path.join(output_path, "plot.pdf")
         plt.savefig(file_name)

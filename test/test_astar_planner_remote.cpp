@@ -15,7 +15,7 @@
 
 #include "rosbag_loader.hpp"
 #include "rosbag_writer.hpp"
-// #include "yaml_param_loader.hpp"
+#include "yaml_param_loader.hpp"
 
 // todo make a ROS parameter later
 // But then again there might be some vehicle blocking 
@@ -49,7 +49,7 @@ autoware::freespace_planning_algorithms::AstarParam a_star_params {
   // search configs
   2.0, // obstacle threshold on grid [0,255]
   0.5, 
-  1.75, 
+  3.0, 
   5.0
 };
 
@@ -137,13 +137,6 @@ geometry_msgs::msg::Pose get_goal_pose(
 }
 
 int main(int argc, char ** argv){
-  // (void) argc;
-  // (void) argv;
-  // std::cout << "number of argc: " << argc << std::endl;
-  // for (int idx = 0; idx < argc; ++idx){ 
-  //   std::cout << "string of argv: " << argv[idx] << std::endl;
-  // }
-
   CLI::App app{"Standalone A star remote planner"};
   std::string rosbag_input_path;
   std::string yaml_param_path;
@@ -169,57 +162,56 @@ int main(int argc, char ** argv){
     rosbag_output_path = (std::filesystem::path(rosbag_input_path) / "output").string();
   }
 
-  // TODO - Overwrite the different params in the struct here if needed - then, loop through them
-
-  
-
-  auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
-  auto planner = std::make_unique<autoware::freespace_planning_algorithms::AstarSearch>(
-    planner_common_params, 
-    collision_vehicle_shape, 
-    a_star_params, 
-    ros_clock);
+  const auto planner_param_configs = read_params_from_file(yaml_param_path);
+  std::cout << "Loaded " << planner_param_configs.size() << " planner parameter configurations."
+            << std::endl;
 
   BagData bag_data = load_data_from_mcap(rosbag_input_path);
-  
-  planner->setMap(bag_data.occupancy_grid);
-
   geometry_msgs::msg::Pose start_pose = bag_data.odometry.pose.pose;
-  
   geometry_msgs::msg::Pose goal_pose = get_goal_pose(bag_data.path, bag_data.occupancy_grid, start_pose);
-  
-  // run and time the planner
-  auto start = std::chrono::steady_clock::now();
-  planner->makePlan(start_pose, goal_pose);
-  auto end = std::chrono::steady_clock::now();
-  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end-start);
-  std::cout << "time to find a solution using planner: " << elapsed_ms.count() << " ms" << std::endl;
 
-  auto waypoints = planner->getWaypoints();
+  for (int idx = 0; idx < static_cast<int>(planner_param_configs.size()); ++idx) {
+    const auto & planner_param_config = planner_param_configs.at(idx);
+    std::cout << "Running planner parameter configuration: " << planner_param_config.identifier
+              << std::endl;
 
-  std::vector<geometry_msgs::msg::Pose> intermediate_poses;
-  for (const auto & waypoint : waypoints.waypoints) {
-    geometry_msgs::msg::Pose pose = waypoint.pose.pose;
-    // std::cout << "waypoint x " << waypoint.pose.pose.position.x << " y " << waypoint.pose.pose.position.y << " w " << waypoint.pose.pose.orientation.w << std::endl;
-    intermediate_poses.push_back(pose);  
-  }
+    auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+    auto planner = std::make_unique<autoware::freespace_planning_algorithms::AstarSearch>(
+      planner_param_config.planner_common_params, 
+      planner_param_config.vehicle_shape, 
+      planner_param_config.a_star_params, 
+      ros_clock);
+    
+    planner->setMap(bag_data.occupancy_grid);
+    
+    // run and time the planner
+    auto start = std::chrono::steady_clock::now();
+    try {
+      planner->makePlan(start_pose, goal_pose);
+    } catch (const std::exception & e) {
+      auto end = std::chrono::steady_clock::now();
+      auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end-start);
+      std::cerr << "Planner parameter configuration failed: " << planner_param_config.identifier
+                << " after " << elapsed_ms.count() << " ms. Reason: " << e.what() << std::endl;
+      continue;
+    }
 
-  // plot_planning_result(bag_data.occupancy_grid, start_pose, goal_pose, intermediate_poses, collision_vehicle_shape);
+    auto end = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end-start);
+    std::cout << "time to find a solution using planner: " << elapsed_ms.count() << " ms"
+              << std::endl;
 
-  bool success = write_data_to_mcap(
-    elapsed_ms.count(), 
-    waypoints,
-    start_pose,
-    goal_pose,
-    bag_data.occupancy_grid,
-    collision_vehicle_shape,
-    rosbag_output_path
-  );
+    auto waypoints = planner->getWaypoints();
 
-  if (success) {
-    std::cout << "Wrote data to mcap bag.\n";
-  } else {
-    std::cerr << "Could not write data to bag.\n";
+    write_data_to_mcap(
+      elapsed_ms.count(), 
+      waypoints,
+      start_pose,
+      goal_pose,
+      bag_data.occupancy_grid,
+      collision_vehicle_shape,
+      rosbag_output_path + "_" + planner_param_config.identifier
+    );
   }
 
   return 0;

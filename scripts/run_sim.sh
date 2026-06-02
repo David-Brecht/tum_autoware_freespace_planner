@@ -11,7 +11,7 @@ output_path_plot="${scenario_path}/plot"
 param_path="/workspace/src/universe/external/tum_autoware_freespace_planner/test/config/planner_config.yaml"
 
 # mkdir -p "${output_path_rosbag}"
-rm -rf "${output_path_rosbag}"
+rm -rf "${output_path_rosbag}"*
 mkdir -p "${output_path_plot}"
 
 echo "=======================" 
@@ -34,9 +34,10 @@ plot_pid=$!
 echo "======================"
 echo "=== Opening output ===" 
 echo "======================" 
-evince "${output_path_plot}/plot.pdf" --fullscreen &
-evince_pid=$!
+# evince "${output_path_plot}/plot.pdf" --fullscreen &
+# evince_pid=$!
 
 read -n 1 -s -r -p "Press any key to stop..."
 
-kill "$plot_pid" "$evince_pid"
+# kill "$plot_pid" "$evince_pid"
+kill "$plot_pid"

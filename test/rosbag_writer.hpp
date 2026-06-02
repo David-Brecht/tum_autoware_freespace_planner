@@ -15,7 +15,7 @@
 
 using namespace autoware::freespace_planning_algorithms;
 
-bool write_data_to_mcap(
+void write_data_to_mcap(
   const float elapsed_time, 
   const PlannerWaypoints & waypoints,
   const geometry_msgs::msg::Pose & start_pose,
@@ -81,7 +81,5 @@ bool write_data_to_mcap(
   writer.write(goal_pose, "goal", time_stamp);
   
   writer.write(occupancy_grid, "costmap", time_stamp);
-
-  return true;
 
 }
