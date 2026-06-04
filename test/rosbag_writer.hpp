@@ -16,14 +16,12 @@
 using namespace autoware::freespace_planning_algorithms;
 
 void write_data_to_mcap(
-  const float elapsed_time, 
-  const PlannerWaypoints & waypoints,
+  const float elapsed_time,
+  const std::vector<std::pair<float, PlannerWaypoints>> & trajectory_results,
   const geometry_msgs::msg::Pose & start_pose,
-  const geometry_msgs::msg::Pose & goal_pose,
   const nav_msgs::msg::OccupancyGrid & occupancy_grid,
   const VehicleShape & vehicle_shape,
-  const std::string & rosbag_output_path
-) 
+  const std::string & rosbag_output_path)
 {
   rosbag2_storage::StorageOptions storage_options;
   storage_options.uri = rosbag_output_path;
@@ -32,7 +30,7 @@ void write_data_to_mcap(
   rosbag2_cpp::ConverterOptions converter_options;
   converter_options.input_serialization_format = "cdr";
   converter_options.output_serialization_format = "cdr";
-  
+
   rosbag2_cpp::Writer writer;
   writer.open(storage_options, converter_options);
 
@@ -54,21 +52,12 @@ void write_data_to_mcap(
   vehicle_base2back_msg.data = vehicle_shape.base2back;
   writer.write(vehicle_base2back_msg, "vehicle_base2back", time_stamp);
 
-  geometry_msgs::msg::PoseArray trajectory_msg;
-  trajectory_msg.header.frame_id = "map";
-  for (const auto & waypoint : waypoints.waypoints) {
-    geometry_msgs::msg::Pose pose = waypoint.pose.pose;
-    trajectory_msg.poses.push_back(pose);
-  }
-  writer.write(trajectory_msg, "trajectory", time_stamp);
-
   tf2_msgs::msg::TFMessage tf_msg;
   geometry_msgs::msg::TransformStamped base_link_transform;
   base_link_transform.header.frame_id = "map";
   base_link_transform.child_frame_id = "base_link";
   base_link_transform.transform.translation.x = start_pose.position.x;
   base_link_transform.transform.translation.y = start_pose.position.y;
-  base_link_transform.transform.translation.x = start_pose.position.x;
   base_link_transform.transform.rotation.x = start_pose.orientation.x;
   base_link_transform.transform.rotation.y = start_pose.orientation.y;
   base_link_transform.transform.rotation.z = start_pose.orientation.z;
@@ -77,9 +66,16 @@ void write_data_to_mcap(
   writer.write(tf_msg, "/tf", time_stamp);
 
   writer.write(start_pose, "start", time_stamp);
-  
-  writer.write(goal_pose, "goal", time_stamp);
-  
   writer.write(occupancy_grid, "costmap", time_stamp);
 
+  for (const auto & [distance_m, waypoints] : trajectory_results) {
+    const std::string dist_tag = std::to_string(static_cast<int>(std::round(distance_m))) + "_m";
+
+    geometry_msgs::msg::PoseArray trajectory_msg;
+    trajectory_msg.header.frame_id = "map";
+    for (const auto & waypoint : waypoints.waypoints) {
+      trajectory_msg.poses.push_back(waypoint.pose.pose);
+    }
+    writer.write(trajectory_msg, "trajectory_" + dist_tag, time_stamp);
+  }
 }

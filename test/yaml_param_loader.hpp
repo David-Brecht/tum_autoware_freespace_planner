@@ -1,5 +1,11 @@
 #pragma once
 
+#include "autoware/freespace_planning_algorithms/abstract_algorithm.hpp"
+
+#include <autoware/freespace_planning_algorithms/astar_search.hpp>
+
+#include <yaml-cpp/yaml.h>
+
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -8,16 +14,15 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-#include <yaml-cpp/yaml.h>
 
-#include "autoware/freespace_planning_algorithms/abstract_algorithm.hpp"
-#include <autoware/freespace_planning_algorithms/astar_search.hpp>
-
-struct PlannerParams {
+struct PlannerParams
+{
   autoware::freespace_planning_algorithms::PlannerCommonParam planner_common_params;
   autoware::freespace_planning_algorithms::AstarParam a_star_params;
   autoware::freespace_planning_algorithms::VehicleShape vehicle_shape;
-  std::string identifier;     // A identifier telling how this parameter set is set up
+  bool use_path_distance_cost = false;
+  double path_distance_weight = 0.0;
+  std::string identifier;  // A identifier telling how this parameter set is set up
 };
 
 namespace yaml_param_loader_detail
@@ -137,7 +142,6 @@ inline void build_param_combinations(
     auto params = current;
     params.vehicle_shape.setMinMaxDimension();
     params.identifier = identifier.empty() ? "default" : identifier;
-    std::cout << "Planner parameter identifier: " << params.identifier << std::endl;
     output.push_back(std::move(params));
     return;
   }
@@ -157,9 +161,9 @@ inline std::vector<PlannerParams> read_params_from_file(const std::string & path
 {
   const YAML::Node config = YAML::LoadFile(path);
 
-  using yaml_param_loader_detail::SweepVariant;
   using yaml_param_loader_detail::build_param_combinations;
   using yaml_param_loader_detail::make_sweep_field;
+  using yaml_param_loader_detail::SweepVariant;
 
   std::vector<std::vector<SweepVariant>> fields;
 
@@ -176,16 +180,14 @@ inline std::vector<PlannerParams> read_params_from_file(const std::string & path
     config, "PlannerCommonParam", "reverse_weight",
     [](PlannerParams & p, const double v) { p.planner_common_params.reverse_weight = v; }));
   fields.push_back(make_sweep_field<double>(
-    config, "PlannerCommonParam", "direction_change_weight",
-    [](PlannerParams & p, const double v) {
+    config, "PlannerCommonParam", "direction_change_weight", [](PlannerParams & p, const double v) {
       p.planner_common_params.direction_change_weight = v;
     }));
   fields.push_back(make_sweep_field<double>(
     config, "PlannerCommonParam", "lateral_goal_range",
     [](PlannerParams & p, const double v) { p.planner_common_params.lateral_goal_range = v; }));
   fields.push_back(make_sweep_field<double>(
-    config, "PlannerCommonParam", "longitudinal_goal_range",
-    [](PlannerParams & p, const double v) {
+    config, "PlannerCommonParam", "longitudinal_goal_range", [](PlannerParams & p, const double v) {
       p.planner_common_params.longitudinal_goal_range = v;
     }));
   fields.push_back(make_sweep_field<double>(
@@ -231,6 +233,13 @@ inline std::vector<PlannerParams> read_params_from_file(const std::string & path
   fields.push_back(make_sweep_field<double>(
     config, "AstarParam", "goal_lat_distance_weight",
     [](PlannerParams & p, const double v) { p.a_star_params.goal_lat_distance_weight = v; }));
+
+  fields.push_back(make_sweep_field<bool>(
+    config, "PathDistanceCost", "use_path_distance_cost",
+    [](PlannerParams & p, const bool v) { p.use_path_distance_cost = v; }));
+  fields.push_back(make_sweep_field<double>(
+    config, "PathDistanceCost", "path_distance_weight",
+    [](PlannerParams & p, const double v) { p.path_distance_weight = v; }));
 
   fields.push_back(make_sweep_field<double>(
     config, "VehicleShape", "length",

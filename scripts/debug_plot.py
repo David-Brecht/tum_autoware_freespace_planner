@@ -47,16 +47,19 @@ from std_msgs.msg import Float64
 OUTPUT_PREFIX = "output_"
 
 
+TRAJ_TOPIC_PREFIX = "trajectory_"
+
+
 @dataclass
 class ProblemDescription:
     costmap: OccupancyGrid
     start: Pose
-    goal: Pose
-    trajectory: PoseArray
+    trajectories: Dict[str, PoseArray]  # key: "15_m", "20_m", …
     vehicle_length: Float64
     vehicle_width: Float64
     vehicle_base2back: Float64
     elapsed_time: Float64
+    goal: Optional[Pose] = None  # no longer written by the planner, kept for older bags
 
     @classmethod
     def from_rosbag_path(cls, path: str) -> "ProblemDescription":
@@ -75,7 +78,16 @@ class ProblemDescription:
             msg = deserialize_message(data, msg_type)
             message_map[topic] = msg
 
-        return cls(**{k: v for k, v in message_map.items() if k in cls.__dataclass_fields__})
+        trajectories = {
+            k[len(TRAJ_TOPIC_PREFIX):]: v
+            for k, v in message_map.items()
+            if k.startswith(TRAJ_TOPIC_PREFIX)
+        }
+        scalar_fields = {
+            k: v for k, v in message_map.items()
+            if k in cls.__dataclass_fields__ and k != "trajectories"
+        }
+        return cls(trajectories=trajectories, **scalar_fields)
 
     @staticmethod
     def get_rosbag_options(path: str, serialization_format="cdr"):
@@ -230,26 +242,22 @@ def plot_costmap(pd: ProblemDescription, ax) -> List:
 
 def plot_start_and_goal(pd: ProblemDescription, ax) -> Dict[str, List]:
     vehicle_model = VehicleModel.from_problem_description(pd)
-    start_artists = vehicle_model.plot_pose(pd.start, ax, "green", 4)
-    goal_artists = vehicle_model.plot_pose(pd.goal, ax, "red", 4)
-
-    return {
-        "Start": start_artists,
-        "Goal": goal_artists,
-    }
+    result: Dict[str, List] = {"Start": vehicle_model.plot_pose(pd.start, ax, "green", 4)}
+    if pd.goal is not None:
+        result["Goal"] = vehicle_model.plot_pose(pd.goal, ax, "red", 4)
+    return result
 
 
-def plot_trajectory(pd: ProblemDescription, ax, color: str) -> List:
-    vehicle_model = VehicleModel.from_problem_description(pd)
+def plot_trajectory(traj: PoseArray, vehicle_model: "VehicleModel", ax, color: str) -> List:
     traj_artists = []
-    xs = [pose.position.x for pose in pd.trajectory.poses]
-    ys = [pose.position.y for pose in pd.trajectory.poses]
+    xs = [pose.position.x for pose in traj.poses]
+    ys = [pose.position.y for pose in traj.poses]
     if xs and ys:
         line, = ax.plot(xs, ys, color=color, linewidth=2.0)
         traj_artists.append(line)
 
-    step = max(len(pd.trajectory.poses) // 40, 1)
-    for pose in pd.trajectory.poses[::step]:
+    step = max(len(traj.poses) // 40, 1)
+    for pose in traj.poses[::step]:
         traj_artists.extend(vehicle_model.plot_pose(pose, ax, color, 0.5))
 
     return traj_artists
@@ -260,16 +268,24 @@ def trajectory_color(index: int):
     return colors[index % len(colors)]
 
 
+def trajectory_label(run_identifier: str, dist_key: str, multi_run: bool) -> str:
+    display = dist_key.replace("_", " ")
+    return f"{run_identifier} – {display}" if multi_run else display
+
+
 def set_view_limits(runs: List[PlannerRun], ax):
-    # Zoom to a square bounding box around start, goal, and trajectory.
+    # Zoom to a square bounding box around start and all trajectories.
     key_poses = []
     max_vehicle_dimension = 0.0
     for run in runs:
         pd = run.problem
         vehicle_model = VehicleModel.from_problem_description(pd)
         max_vehicle_dimension = max(max_vehicle_dimension, vehicle_model.length, vehicle_model.width)
-        key_poses.extend([pd.start, pd.goal])
-        key_poses.extend(pd.trajectory.poses)
+        key_poses.append(pd.start)
+        if pd.goal is not None:
+            key_poses.append(pd.goal)
+        for traj in pd.trajectories.values():
+            key_poses.extend(traj.poses)
 
     xs = [p.position.x for p in key_poses]
     ys = [p.position.y for p in key_poses]
@@ -285,14 +301,19 @@ def set_view_limits(runs: List[PlannerRun], ax):
 
 def plot_problem(runs: List[PlannerRun], ax, meta_info: Optional[str] = None) -> Dict[str, List]:
     base_pd = runs[0].problem
+    multi_run = len(runs) > 1
 
-    groups = {
-        "Costmap": plot_costmap(base_pd, ax),
-    }
+    groups: Dict[str, List] = {"Costmap": plot_costmap(base_pd, ax)}
     groups.update(plot_start_and_goal(base_pd, ax))
 
-    for idx, run in enumerate(runs):
-        groups[run.identifier] = plot_trajectory(run.problem, ax, trajectory_color(idx))
+    color_idx = 0
+    for run in runs:
+        vehicle_model = VehicleModel.from_problem_description(run.problem)
+        for dist_key in sorted(run.problem.trajectories.keys(), key=natural_key):
+            label = trajectory_label(run.identifier, dist_key, multi_run)
+            traj = run.problem.trajectories[dist_key]
+            groups[label] = plot_trajectory(traj, vehicle_model, ax, trajectory_color(color_idx))
+            color_idx += 1
 
     set_view_limits(runs, ax)
 
@@ -337,7 +358,12 @@ if __name__ == "__main__":
         check_ax = fig.add_axes([0.68, 0.12, 0.30, 0.78])
         check = CheckButtons(check_ax, labels, actives=[True] * len(labels))
         label_colors = {"Costmap": "black", "Start": "green", "Goal": "red"}
-        label_colors.update({run.identifier: trajectory_color(idx) for idx, run in enumerate(runs)})
+        color_idx = 0
+        for run in runs:
+            for dist_key in sorted(run.problem.trajectories.keys(), key=natural_key):
+                label = trajectory_label(run.identifier, dist_key, len(runs) > 1)
+                label_colors[label] = trajectory_color(color_idx)
+                color_idx += 1
         for label in check.labels:
             label.set_color(label_colors.get(label.get_text(), "black"))
             label.set_fontsize(8)
@@ -363,7 +389,12 @@ if __name__ == "__main__":
         check_ax = fig.add_axes([0.68, 0.12, 0.30, 0.78])
         check_ax.axis("off")
         label_colors = {"Costmap": "black", "Start": "green", "Goal": "red"}
-        label_colors.update({run.identifier: trajectory_color(idx) for idx, run in enumerate(runs)})
+        color_idx = 0
+        for run in runs:
+            for dist_key in sorted(run.problem.trajectories.keys(), key=natural_key):
+                label = trajectory_label(run.identifier, dist_key, len(runs) > 1)
+                label_colors[label] = trajectory_color(color_idx)
+                color_idx += 1
         for idx, label in enumerate(labels):
             y = 1.0 - idx * 0.055
             if y < 0:

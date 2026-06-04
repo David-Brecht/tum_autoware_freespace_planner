@@ -1,8 +1,13 @@
 #!/bin/bash
 
 # give let the user define a range of paths here
-# scenario_path="/workspace/scenarios/snapshot_20260601_164941" 
-scenario_path="/workspace/scenarios/snapshot_20260602_234306" 
+scenario_path="/workspace/scenarios/snapshot_20260601_164941"       # vehicle in ego lane. prefer this
+# scenario_path="/workspace/scenarios/snapshot_20260602_125319"       # bus in ego lane
+# scenario_path="/workspace/scenarios/snapshot_20260602_234306"       # bus slightly in ego lane
+# scenario_path="/workspace/scenarios/snapshot_20260604_112549"       # parked vehicle inside curve
+# scenario_path="/workspace/scenarios/snapshot_20260604_114408"
+# scenario_path="/workspace/scenarios/snapshot_20260604_172245"
+ 
 input_path="${scenario_path}/input"
 output_path_rosbag="${scenario_path}/output"
 output_path_plot="${scenario_path}/plot"
@@ -22,6 +27,7 @@ echo "======================="
   --param-path "${param_path}" \
   --output-path "${output_path_rosbag}" &&
 
+echo "" 
 echo "=============================" 
 echo "=== Running visualization ===" 
 echo "=============================" 
