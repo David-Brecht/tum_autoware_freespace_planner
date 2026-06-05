@@ -12,8 +12,8 @@ scenario_paths=(
   # "/workspace/scenarios/snapshot_20260605_163947"
   # "/workspace/scenarios/snapshot_20260604_180140"
   # "/workspace/scenarios/snapshot_20260602_125319"
-  # "/workspace/scenarios/snapshot_20260604_112549"     # left turn
-  "/workspace/scenarios/snapshot_20260605_143657"     # left turn, 0.5 m lanelet margin
+  "/workspace/scenarios/snapshot_20260604_112549"     # left turn
+  # "/workspace/scenarios/snapshot_20260605_143657"     # left turn, 0.5 m lanelet margin
 )
 
 # The parameters for the planner

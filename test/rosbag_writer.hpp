@@ -61,6 +61,7 @@ void write_data_to_mcap(
   base_link_transform.child_frame_id = "base_link";
   base_link_transform.transform.translation.x = start_pose.position.x;
   base_link_transform.transform.translation.y = start_pose.position.y;
+  base_link_transform.transform.translation.z = start_pose.position.z;
   base_link_transform.transform.rotation.x = start_pose.orientation.x;
   base_link_transform.transform.rotation.y = start_pose.orientation.y;
   base_link_transform.transform.rotation.z = start_pose.orientation.z;
