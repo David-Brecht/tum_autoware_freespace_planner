@@ -24,6 +24,7 @@ from math import sin
 import os
 import re
 import subprocess
+from threading import local
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -34,6 +35,7 @@ from geometry_msgs.msg import PoseArray
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons
 from nav_msgs.msg import OccupancyGrid
@@ -48,6 +50,24 @@ OUTPUT_PREFIX = "output_"
 
 
 TRAJ_TOPIC_PREFIX = "trajectory_"
+
+
+# 10 muted sequential colors for cost bins (0,10] … (90,99], bookended by white (0) and black (100)
+_COSTMAP_RANGE_COLORS = [
+    "#b8ddb8",  # 1–10   muted light green
+    "#9ecb9e",  # 11–20  muted green
+    "#c8d888",  # 21–30  muted yellow-green
+    "#d8c870",  # 31–40  muted yellow
+    "#d8a858",  # 41–50  muted amber
+    "#c88448",  # 51–60  muted orange
+    "#b86848",  # 61–70  muted orange-red
+    "#a05040",  # 71–80  muted red
+    "#884060",  # 81–90  muted rose
+    "#584060",  # 91–99  muted dark purple
+]
+_COSTMAP_BOUNDARIES = [-0.5, 0.5, 10.5, 20.5, 30.5, 40.5, 50.5, 60.5, 70.5, 80.5, 90.5, 99.5, 100.5]
+_COSTMAP_CMAP = mcolors.ListedColormap(["white"] + _COSTMAP_RANGE_COLORS + ["black"])
+_COSTMAP_NORM = mcolors.BoundaryNorm(_COSTMAP_BOUNDARIES, _COSTMAP_CMAP.N, clip=True)
 
 
 @dataclass
@@ -121,10 +141,16 @@ class VehicleModel:
         front = self.length - self.base2back
         right = -0.5 * self.width
         left = 0.5 * self.width
+        # print('vehicle_model.length ', self.length)
+        # print('vehicle_model.width ', self.width)
+        # print('vehicle_model.base2back ', self.base2back)
+        
         vertices_local = np.array([[back, left], [back, right], [front, right], [front, left]])
+        # print(vertices_local)
 
         R_mat = np.array([[cos(yaw), -sin(yaw)], [sin(yaw), cos(yaw)]])
         vertices_global = vertices_local.dot(R_mat.T) + np.array([x, y])
+        # print(vertices_global)
         return vertices_global
 
     def plot_pose(self, pose: Pose, ax, color="black", lw=1) -> List:
@@ -218,6 +244,101 @@ def load_planner_runs(input_path: str) -> List[PlannerRun]:
     return runs
 
 
+class CellInspector:
+    """Click to query a cell value; zoom in to ≤400 visible cells to see values drawn in each cell."""
+
+    MAX_CELLS_FOR_TEXT = 400
+
+    def __init__(self, ax, costmap: OccupancyGrid):
+        self.ax = ax
+        info = costmap.info
+        self.arr = np.array(costmap.data).reshape((info.height, info.width))
+        self.res = info.resolution
+        self.nx = info.width
+        self.ny = info.height
+        _, _, yaw = VehicleModel.euler_from_quaternion(info.origin.orientation)
+        self.cos_yaw = cos(yaw)
+        self.sin_yaw = sin(yaw)
+        self.ox = info.origin.position.x
+        self.oy = info.origin.position.y
+
+        self._cell_texts: List = []
+        self._click_label = ax.text(
+            0.01, 0.01, f"Click a cell to inspect  (zoom in to ≤{self.MAX_CELLS_FOR_TEXT} cells for value overlay)",
+            transform=ax.transAxes, fontsize=7, color="navy", va="bottom",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.85),
+            zorder=10,
+        )
+
+        ax.figure.canvas.mpl_connect("button_press_event", self._on_click)
+        ax.callbacks.connect("xlim_changed", self._on_zoom)
+        ax.callbacks.connect("ylim_changed", self._on_zoom)
+
+    def _world_to_cell(self, wx: float, wy: float) -> Tuple[int, int]:
+        dx, dy = wx - self.ox, wy - self.oy
+        col = int((self.cos_yaw * dx + self.sin_yaw * dy) / self.res)
+        row = int((-self.sin_yaw * dx + self.cos_yaw * dy) / self.res)
+        return col, row
+
+    def _cell_center_world(self, col: int, row: int) -> Tuple[float, float]:
+        lx = (col + 0.5) * self.res
+        ly = (row + 0.5) * self.res
+        return (
+            self.cos_yaw * lx - self.sin_yaw * ly + self.ox,
+            self.sin_yaw * lx + self.cos_yaw * ly + self.oy,
+        )
+
+    def _visible_cell_range(self) -> Tuple[int, int, int, int]:
+        xlim, ylim = self.ax.get_xlim(), self.ax.get_ylim()
+        corners = [
+            (xlim[0], ylim[0]), (xlim[1], ylim[0]),
+            (xlim[0], ylim[1]), (xlim[1], ylim[1]),
+        ]
+        cs, rs = [], []
+        for wx, wy in corners:
+            dx, dy = wx - self.ox, wy - self.oy
+            cs.append((self.cos_yaw * dx + self.sin_yaw * dy) / self.res)
+            rs.append((-self.sin_yaw * dx + self.cos_yaw * dy) / self.res)
+        col_lo = max(0, int(min(cs)))
+        col_hi = min(self.nx - 1, int(max(cs)))
+        row_lo = max(0, int(min(rs)))
+        row_hi = min(self.ny - 1, int(max(rs)))
+        return col_lo, col_hi, row_lo, row_hi
+
+    def _on_click(self, event):
+        if event.inaxes is not self.ax or event.button != 1:
+            return
+        col, row = self._world_to_cell(event.xdata, event.ydata)
+        if 0 <= col < self.nx and 0 <= row < self.ny:
+            val = self.arr[row, col]
+            self._click_label.set_text(f"[col={col}, row={row}]  value={val}")
+        else:
+            self._click_label.set_text("(outside grid)")
+        self.ax.figure.canvas.draw_idle()
+
+    def _on_zoom(self, _):
+        col_lo, col_hi, row_lo, row_hi = self._visible_cell_range()
+        n_vis = (col_hi - col_lo + 1) * (row_hi - row_lo + 1)
+
+        for t in self._cell_texts:
+            t.remove()
+        self._cell_texts.clear()
+
+        if n_vis <= 0 or n_vis > self.MAX_CELLS_FOR_TEXT:
+            return
+
+        for row in range(row_lo, row_hi + 1):
+            for col in range(col_lo, col_hi + 1):
+                wx, wy = self._cell_center_world(col, row)
+                self._cell_texts.append(
+                    self.ax.text(
+                        wx, wy, str(self.arr[row, col]),
+                        fontsize=4, ha="center", va="center",
+                        color="red", clip_on=True, zorder=5,
+                    )
+                )
+
+
 def plot_costmap(pd: ProblemDescription, ax) -> List:
     info = pd.costmap.info
     n_grid = np.array([info.width, info.height])
@@ -237,7 +358,23 @@ def plot_costmap(pd: ProblemDescription, ax) -> List:
     X = cos_yaw * C - sin_yaw * R + ox
     Y = sin_yaw * C + cos_yaw * R + oy
 
-    return [ax.pcolormesh(X, Y, arr, cmap="Greys", shading="flat", rasterized=True)]
+    return [ax.pcolormesh(X, Y, arr, cmap=_COSTMAP_CMAP, norm=_COSTMAP_NORM, shading="flat", rasterized=True)]
+
+
+def _add_costmap_legend(fig: plt.Figure, rect: List[float]) -> None:
+    """Draw a compact horizontal strip showing the 12 discrete cost levels."""
+    labels = ["0", "1–10", "11–20", "21–30", "31–40", "41–50",
+              "51–60", "61–70", "71–80", "81–90", "91–99", "100"]
+    representative = np.array([[0, 5, 15, 25, 35, 45, 55, 65, 75, 85, 95, 100]])
+    cax = fig.add_axes(rect)
+    cax.imshow(representative, cmap=_COSTMAP_CMAP, norm=_COSTMAP_NORM, aspect="auto")
+    cax.set_yticks([])
+    cax.set_xticks(np.arange(12))
+    cax.set_xticklabels(labels, fontsize=5, rotation=30, ha="right")
+    cax.tick_params(axis="x", length=2, pad=1)
+    for spine in cax.spines.values():
+        spine.set_linewidth(0.5)
+        spine.set_color("#888888")
 
 
 def plot_start_and_goal(pd: ProblemDescription, ax) -> Dict[str, List]:
@@ -350,9 +487,11 @@ if __name__ == "__main__":
 
     if args.interactive:
         fig, ax = plt.subplots(figsize=(12, 8))
-        fig.subplots_adjust(right=0.66)
+        fig.subplots_adjust(right=0.66, bottom=0.11)
 
         groups = plot_problem(runs, ax, meta_info)
+        CellInspector(ax, runs[0].problem.costmap)
+        _add_costmap_legend(fig, [0.04, 0.01, 0.60, 0.075])
 
         labels = list(groups.keys())
         check_ax = fig.add_axes([0.68, 0.12, 0.30, 0.78])
@@ -382,8 +521,9 @@ if __name__ == "__main__":
         plt.show()
     else:
         fig, ax = plt.subplots(figsize=(12, 8))
-        fig.subplots_adjust(right=0.66)
+        fig.subplots_adjust(right=0.66, bottom=0.11)
         groups = plot_problem(runs, ax, meta_info)
+        _add_costmap_legend(fig, [0.04, 0.01, 0.60, 0.075])
 
         labels = list(groups.keys())
         check_ax = fig.add_axes([0.68, 0.12, 0.30, 0.78])

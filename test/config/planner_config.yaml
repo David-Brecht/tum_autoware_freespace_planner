@@ -12,13 +12,13 @@ PlannerCommonParam:
   - curve_weight: [0.5]                   # curve moving cost [-]
   - reverse_weight: 0.7                 # backward moving cost [-]
   - direction_change_weight: [2.0]        # direction change cost [-]
-  - lateral_goal_range: 1.0             # reaching threshold, lateral error [m]
+  - lateral_goal_range: 0.75             # reaching threshold, lateral error [m]
   - longitudinal_goal_range: [1.0]        # reaching threshold, longitudinal error [m]
   - angle_goal_range: [0.5]               # reaching threshold, angle error [deg]
   - max_turning_ratio: [0.7]              # factor of max turning range to use [-]
   - turning_steps: [1]                    # number of turning steps [-]
   # Costmap configs
-  - obstacle_threshold: [100]       # obstacle threshold on grid [-]
+  - obstacle_threshold: [50]       # obstacle threshold on grid [-]
 
 AstarParam:
   # Base configs
@@ -40,10 +40,11 @@ PathDistanceCost:
 
 # Shape of the vehicle (EDGAR)
 VehicleShape:
-  # - length: 2.973                       # X [m]
-  # - width: [1.2]   
+  # - length: 0.5                       # X [m]
+  # - width: [0.5]   
   - length: 4.973                       # X [m]
   - width: 2.2252                       # Y [m]
   - base_length: 3.124 
-  - max_steering: [0.70] 
+  - max_steering: [0.70]      # Taken from planning sim
   - base2back: 0.897                    # base_link to rear [m]
+  # - base2back: 0.0                    # base_link to rear [m]

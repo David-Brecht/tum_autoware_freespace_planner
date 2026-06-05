@@ -335,7 +335,7 @@ int main(int argc, char ** argv)
 
     write_data_to_mcap(
       static_cast<float>(elapsed_ms), trajectory_results, start_pose, bag_data.occupancy_grid,
-      collision_vehicle_shape, rosbag_output_path + "_" + planner_param_config.identifier);
+      planner_param_config.vehicle_shape, rosbag_output_path + "_" + planner_param_config.identifier);
   }
 
   return 0;

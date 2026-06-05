@@ -43,14 +43,17 @@ void write_data_to_mcap(
   std_msgs::msg::Float64 vehicle_length_msg;
   vehicle_length_msg.data = vehicle_shape.length;
   writer.write(vehicle_length_msg, "vehicle_length", time_stamp);
+  // std::cout << "vehicle length: " << vehicle_shape.length << std::endl;
 
   std_msgs::msg::Float64 vehicle_width_msg;
   vehicle_width_msg.data = vehicle_shape.width;
   writer.write(vehicle_width_msg, "vehicle_width", time_stamp);
+  // std::cout << "vehicle width: " << vehicle_shape.width << std::endl;
 
   std_msgs::msg::Float64 vehicle_base2back_msg;
   vehicle_base2back_msg.data = vehicle_shape.base2back;
   writer.write(vehicle_base2back_msg, "vehicle_base2back", time_stamp);
+  // std::cout << "vehicle base2back: " << vehicle_shape.base2back << std::endl;
 
   tf2_msgs::msg::TFMessage tf_msg;
   geometry_msgs::msg::TransformStamped base_link_transform;

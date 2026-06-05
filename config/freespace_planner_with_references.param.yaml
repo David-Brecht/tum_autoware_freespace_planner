@@ -9,44 +9,44 @@
     th_stopped_velocity_mps: 0.01         # Speed below which the vehicle is considered stopped (used in updateTargetIndex)
     th_course_out_distance_m: 1.0         # Distance from nearest trajectory point that triggers a replan
     th_obstacle_time_sec: 0.2             # was 1.0 - An obstacle must block the trajectory continuously for this long before replanning fires
-    vehicle_shape_margin_m: 0.3           # was 0.5 - Safety padding added to all vehicle dimensions before collision checking
+    vehicle_shape_margin_m: 0.0           # was 0.5 - Safety padding added to all vehicle dimensions before collision checking
     replan_when_obstacle_found: true      # Enables the obstacle-on-trajectory replan trigger
     replan_when_course_out: true          # Enables the course-deviation replan trigger
     max_planning_velocity: 100.0          # was 0.0 - Replanning is skipped if ego speed exceeds this
-    sampling_start_m: 8.0                 # Nearest sampled goal distance from ego [m]
-    sampling_step_m: 10.0                 # Distance between goal samples along the reference path [m]
-    sampling_end_m: 45.1                  # Farthest sampled goal distance [m]
+    sampling_start_m: 15.0                 # Nearest sampled goal distance from ego [m]
+    sampling_step_m: 5.0                 # Distance between goal samples along the reference path [m]
+    sampling_end_m: 35.1                  # Farthest sampled goal distance [m]
     stuck_replan_time_sec: 3.0            # Seconds stopped before returning from locked mode to sampling mode
-    use_path_distance_cost: true          # Enable reference-path attraction cost layer in A*
-    path_distance_weight: 5.0            # Weight for path attraction: cost += weight * free_space_dist_to_path [m]
+    use_path_distance_cost: false          # Enable reference-path attraction cost layer in A*
+    path_distance_weight: 0.0            # Weight for path attraction: cost += weight * free_space_dist_to_path [m]
     path_distance_viz_cap: 5.0           # [m] Distance that maps to full cost (99) in the debug costmap
 
     # -- Configurations common to the all planners --
     # base configs
     time_limit: 30000.0                   # [ms] - Hard deadline for A* search; planning aborts if exceeded
-    max_turning_ratio: 0.8                # Fraction of max steering angle the planner may use. 1.0 = full lock, 0.5 = half — limits how tight turns are
-    turning_steps: 2                      # was 1 - Number of discrete steering levels between straight and max steer (each direction). Total steering choices = 2×turning_steps+1
+    max_turning_ratio: 0.7                # Fraction of max steering angle the planner may use. 1.0 = full lock, 0.5 = half — limits how tight turns are
+    turning_steps: 1                      # was 1 - Number of discrete steering levels between straight and max steer (each direction). Total steering choices = 2×turning_steps+1
     # search configs
     theta_size: 120                       # Number of discrete headings spanning 360°. Heading resolution = 2π/theta_size. Higher = finer angular grid, more memory and compute
-    angle_goal_range: 6.0                 # Heading tolerance for goal acceptance
+    angle_goal_range: 0.5                 # Heading tolerance for goal acceptance
     lateral_goal_range: 0.5               # Lateral position tolerance for goal acceptance
     longitudinal_goal_range: 1.0          # Lngitudinal position tolerance for goal acceptance
     curve_weight: 0.5
     reverse_weight: 0.7                   # Move cost multiplier when driving backward: total_weight *= (1 + reverse_weight). Higher = stronger preference for forward motion
     direction_change_weight: 2.0          # Cost added when switching forward↔backward = weight × (1 + 1 / (1 + dist_since_last_switch)). Short gear changes are penalized more heavily
     # costmap configs
-    obstacle_threshold: 100               # Costmap cell value above which a cell is treated as an obstacle
+    obstacle_threshold: 50               # Costmap cell value above which a cell is treated as an obstacle
 
     # -- A* search Configurations --
     astar:
       search_method: "forward"            # "forward": search start→goal. "backward": search goal→start — sometimes produces better paths when backing into tight spaces
       only_behind_solutions: false        # Rejects solutions where the vehicle ends up in front of the goal heading — useful for parking-into-spot scenarios
-      use_back: false                     # If false, reverse motion is disabled entirely (forward-only planning)
+      use_back: true                     # If false, reverse motion is disabled entirely (forward-only planning)
       adapt_expansion_distance: true      # Dynamically scales arc length based on distance-to-goal and distance-to-obstacle. Long steps in open space, short steps near obstacles — trades off speed vs. precision
       expansion_distance: 0.5             # Arc length of each node expansion. When adapt_expansion_distance=false this is fixed. When true, it is the minimum arc length
       near_goal_distance: 3.0             # Within this radius of the goal, goal_lat_distance_weight activates and finer goal acceptance is used
       distance_heuristic_weight: 2.0      # Multiplier on the Reeds-Shepp heuristic. Higher = more greedy, faster but less optimal; lower = more thorough but slower
-      smoothness_weight: 5.0              # was 0.5 - Cost per unit of steering-angle change between consecutive nodes = weight × Δsteering_index / (2 × turning_steps). Higher = smoother steering
+      smoothness_weight: 0.5              # was 0.5 - Cost per unit of steering-angle change between consecutive nodes = weight × Δsteering_index / (2 × turning_steps). Higher = smoother steering
       obstacle_distance_weight: 1.75      # Cost proportional to proximity to obstacles (via Euclidean distance transform). Applied only within vehicle_max_dimension + clearance_buffer of an obstacle. Higher = keeps more clearance from objects
       goal_lat_distance_weight: 5.0       # Cost proportional to lateral offset from the goal when within near_goal_distance. Higher = forces tighter lateral alignment at the goal
 
