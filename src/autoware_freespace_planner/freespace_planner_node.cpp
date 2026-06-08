@@ -148,7 +148,8 @@ PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
 
 bool FreespacePlannerNode::isPlanRequired()
 {
-  if (trajectory_.points.empty()) {
+  if (candidate_trajectories_.candidate_trajectories.empty()) {
+    RCLCPP_INFO(get_logger(), "No candidate trajectories. Replanning");
     return true;
   }
 
@@ -159,7 +160,7 @@ bool FreespacePlannerNode::isPlanRequired()
   }
 
   if (node_param_.replan_when_obstacle_found && checkCurrentTrajectoryCollision()) {
-    RCLCPP_DEBUG(get_logger(), "Found obstacle");
+    RCLCPP_INFO(get_logger(), "Found obstacle on trajectory. Replanning required");
     return true;
   }
 
@@ -175,6 +176,8 @@ bool FreespacePlannerNode::isPlanRequired()
   return false;
 }
 
+// TODO - make this work again but now with the candidate trajectories (in initial stage) or the actual trajectory (execution stage)
+// Check - somhow this function works but this is unexpected behavior
 bool FreespacePlannerNode::checkCurrentTrajectoryCollision()
 {
   algo_->setMap(*occupancy_grid_);
@@ -239,6 +242,7 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
 
   std::vector<Pose> goal_poses = get_goal_poses(*msg, odom_->pose.pose, goal_distances_along_path_);
 
+  goal_poses_.clear();
   for (const auto & goal_pose : goal_poses) {
     PoseStamped pose;
     pose.header = msg->header;
@@ -246,10 +250,7 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
     goal_poses_.push_back(pose);
   }
 
-  // TODO delte any parking references
   is_new_parking_cycle_ = true;
-
-  reset();
 }
 
 std::vector<Pose> FreespacePlannerNode::get_goal_poses(const Path & path, const Pose & start_pose, const std::vector<float> distance_along_path)
@@ -342,7 +343,7 @@ void FreespacePlannerNode::onTimer()
     return;
   }
 
-  if (is_completed_) {
+  if (is_completed_ && !replan_requested_) {
     partial_trajectory_.header = odom_->header;
     const auto stop_trajectory = utils::create_stop_trajectory(partial_trajectory_);
     trajectory_pub_->publish(stop_trajectory);
@@ -358,6 +359,7 @@ void FreespacePlannerNode::onTimer()
   }
 
   // Must stop before replanning any new trajectory
+  // RCLCPP_INFO_STREAM(this->get_logger(), "Reset in progress: " << reset_in_progress_);
   const bool is_reset_required = !reset_in_progress_ && isPlanRequired();
   if (is_reset_required) {
     // Stop before planning new trajectory, except in a new parking cycle as the vehicle already
@@ -381,6 +383,7 @@ void FreespacePlannerNode::onTimer()
       utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
     if (is_ego_stopped) {
       // Plan new trajectory
+      RCLCPP_INFO(this->get_logger(), "planning new trajectories");
       planTrajectories();
       reset_in_progress_ = false;
     } else {
@@ -446,15 +449,16 @@ void FreespacePlannerNode::planTrajectories()
   // execute planning
   const rclcpp::Time start = get_clock()->now();
   std::string error_msg;
-  bool result = false;
-  
+  bool any_result = false;
+
   for (const auto & goal_pose_in_costmap_frame : goal_poses_in_costmap_frame) {
     try {
-      result = algo_->makePlan(current_pose_in_costmap_frame, goal_pose_in_costmap_frame.pose);
+      const bool result = algo_->makePlan(current_pose_in_costmap_frame, goal_pose_in_costmap_frame.pose);
 
       if(!result) {
         continue;
       }
+      any_result = true;
 
       autoware_internal_planning_msgs::msg::CandidateTrajectory candidate_trajectory;
       candidate_trajectory.header.stamp = start; // simplification
@@ -469,15 +473,15 @@ void FreespacePlannerNode::planTrajectories()
 
       candidate_trajectories_.candidate_trajectories.push_back(candidate_trajectory);
 
-      RCLCPP_INFO_STREAM(this->get_logger(), "Found goal for goal pose (x = " << goal_pose_in_costmap_frame.pose.position.x << " | y = " << goal_pose_in_costmap_frame.pose.position.y << ")\n");
+      // RCLCPP_INFO_STREAM(this->get_logger(), "Found goal for goal pose (x = " << goal_pose_in_costmap_frame.pose.position.x << " | y = " << goal_pose_in_costmap_frame.pose.position.y << ")\n");
     } catch (const std::exception & e) {
       error_msg = e.what();
     }
   } 
   const rclcpp::Time end = get_clock()->now();
-  RCLCPP_DEBUG(get_logger(), "Freespace planning: %f [s]", (end - start).seconds());
+  RCLCPP_INFO(get_logger(), "Freespace planning: %f [s]", (end - start).seconds());
 
-  if (result) {
+  if (any_result) {
     reversing_indices_ = utils::get_reversing_indices(trajectory_);
     prev_target_index_ = 0;
     target_index_ = utils::get_next_target_index(
@@ -492,6 +496,7 @@ void FreespacePlannerNode::reset()
 {
   trajectory_ = Trajectory();
   partial_trajectory_ = Trajectory();
+  candidate_trajectories_ = CandidateTrajectories();
   reversing_indices_ = {};
   prev_target_index_ = 0;
   target_index_ = 0;

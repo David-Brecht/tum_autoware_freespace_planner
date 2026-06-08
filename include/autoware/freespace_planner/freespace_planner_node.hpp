@@ -144,6 +144,7 @@ private:
   std::vector<PoseStamped> goal_poses_;
   CandidateTrajectories candidate_trajectories_; 
   // geometry_msgs::msg::PoseArray goal_poses_array_; // TODO implement later
+  // std::vector<float> goal_distances_along_path_ {25.0}; // TODO read in as param
   std::vector<float> goal_distances_along_path_ {15.0, 20.0, 25.0, 30.0, 35.0}; // TODO read in as param
 
   Trajectory trajectory_;
