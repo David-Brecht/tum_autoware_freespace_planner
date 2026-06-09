@@ -149,18 +149,18 @@ PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
 bool FreespacePlannerNode::isPlanRequired()
 {
   if (candidate_trajectories_.candidate_trajectories.empty()) {
-    RCLCPP_INFO(get_logger(), "No candidate trajectories. Replanning");
+    RCLCPP_INFO(get_logger(), "No candidate trajectories. Triggering planning.");
     return true;
   }
 
   if (replan_requested_) {
-    RCLCPP_INFO(get_logger(), "Replan requested");
+    RCLCPP_INFO(get_logger(), "User requested planning.");
     replan_requested_ = false;
     return true;
   }
 
   if (node_param_.replan_when_obstacle_found && checkCurrentTrajectoryCollision()) {
-    RCLCPP_INFO(get_logger(), "Found obstacle on trajectory. Replanning required");
+    RCLCPP_INFO(get_logger(), "Found obstacle on trajectory. Triggering planning.");
     return true;
   }
 
@@ -168,7 +168,7 @@ bool FreespacePlannerNode::isPlanRequired()
     const bool is_course_out = utils::calc_distance_2d(trajectory_, current_pose_.pose) >
                                node_param_.th_course_out_distance_m;
     if (is_course_out) {
-      RCLCPP_INFO(get_logger(), "Course out");
+      RCLCPP_INFO(get_logger(), "Out of course. Triggering planning.");
       return true;
     }
   }
@@ -201,6 +201,7 @@ bool FreespacePlannerNode::checkCurrentTrajectoryCollision()
   return (get_clock()->now() - obs_found_time_.get()).seconds() > node_param_.th_obstacle_time_sec;
 }
 
+// TODO this is likely not needed?
 void FreespacePlannerNode::updateTargetIndex()
 {
   if (!utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps)) {
@@ -240,22 +241,25 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
   }
   path_ = msg;
 
-  std::vector<Pose> goal_poses = get_goal_poses(*msg, odom_->pose.pose, goal_distances_along_path_);
+  const auto goal_poses = get_goal_poses(*msg, odom_->pose.pose, goal_distances_along_path_);
 
   goal_poses_.clear();
-  for (const auto & goal_pose : goal_poses) {
-    PoseStamped pose;
-    pose.header = msg->header;
-    pose.pose = goal_pose;
-    goal_poses_.push_back(pose);
-  }
+  goal_poses_.reserve(goal_poses.size());
 
+  // TODO this is ugly still. Better use geometry_msgs/PoseArray or similar for this. also, the seperation between onPath and get_goal_poses could be better
+  for (const auto & goal_pose : goal_poses) {
+    auto & stamped_pose = goal_poses_.emplace_back();
+    stamped_pose.header = msg->header;
+    stamped_pose.pose = goal_pose;
+  }
+  // TODO remove any parking references
   is_new_parking_cycle_ = true;
 }
 
-std::vector<Pose> FreespacePlannerNode::get_goal_poses(const Path & path, const Pose & start_pose, const std::vector<float> distance_along_path)
+static std::vector<Pose> FreespacePlannerNode::get_goal_poses(const Path & path, const Pose & start_pose, const std::vector<float> & distance_along_path)
 {
   std::vector<Pose> goal_poses;
+  goal_poses.reserve(distance_along_path.size());
   const size_t pose_idx = autoware::motion_utils::findNearestIndex(path.points, start_pose.position);
 
   std::vector<PathPoint> points_from_start (path.points.begin()+pose_idx, path.points.end());
@@ -359,7 +363,6 @@ void FreespacePlannerNode::onTimer()
   }
 
   // Must stop before replanning any new trajectory
-  // RCLCPP_INFO_STREAM(this->get_logger(), "Reset in progress: " << reset_in_progress_);
   const bool is_reset_required = !reset_in_progress_ && isPlanRequired();
   if (is_reset_required) {
     // Stop before planning new trajectory, except in a new parking cycle as the vehicle already
@@ -495,7 +498,7 @@ void FreespacePlannerNode::planTrajectories()
 void FreespacePlannerNode::reset()
 {
   trajectory_ = Trajectory();
-  partial_trajectory_ = Trajectory();
+  partial_trajectory_ = Trajectory(); // TODO remove any partial trajectory?
   candidate_trajectories_ = CandidateTrajectories();
   reversing_indices_ = {};
   prev_target_index_ = 0;

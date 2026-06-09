@@ -34,6 +34,7 @@
 #include "autoware_utils/ros/logger_level_configure.hpp"
 
 #include <autoware/freespace_planning_algorithms/astar_search.hpp>
+#include <autoware/freespace_planning_algorithms/reeds_shepp.hpp>
 #include <autoware/freespace_planning_algorithms/rrtstar.hpp>
 #include <autoware/route_handler/route_handler.hpp>
 #include <autoware_utils/ros/polling_subscriber.hpp>
@@ -102,6 +103,15 @@ struct NodeParam
   double vehicle_shape_margin_m;
   bool replan_when_obstacle_found;
   bool replan_when_course_out;
+};
+
+enum class States {
+  IDLE,
+  SAMPLING,
+  AWAIT_TRAJECTORY_SELECTION,
+  EXECUTING,
+  AWAIT_AUTOMATION_HANDOVER,
+  AUTOMATED_DRIVING
 };
 
 class FreespacePlannerNode : public rclcpp::Node
@@ -214,10 +224,10 @@ private:
 
   TransformStamped getTransform(const std::string & from, const std::string & to);
 
-  std::vector<geometry_msgs::msg::Pose> get_goal_poses(
+  static std::vector<geometry_msgs::msg::Pose> get_goal_poses(
     const autoware_planning_msgs::msg::Path & path,
     const geometry_msgs::msg::Pose & start_pose, 
-    const std::vector<float> distance_along_path);
+    const std::vector<float> & distance_along_path);
 
   void onTriggerReplan(
     const std::shared_ptr<Trigger::Request> request,
