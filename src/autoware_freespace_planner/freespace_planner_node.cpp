@@ -243,9 +243,7 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
       "Received path before odometry. Ignoring path and not computing goal points.");
     return;
   }
-
   path_ = msg;
-
   goal_poses_.header = msg->header;
   goal_poses_.poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
 }
@@ -348,24 +346,37 @@ void FreespacePlannerNode::handleIdle()
 
 void FreespacePlannerNode::handlePlanning() 
 {
+  // In the planning state, we stand still
+  trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
+
   const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
   if (is_ego_stopped) {
     // TODO right now we are searching until a candidate will be found. But there might be 
     // scenarios where no trajectory candidate can be found → we are stuck. Solve this via waypoint 
     // guidance or similar
     do {
-      RCLCPP_INFO(this->get_logger(), "Planning new candidate trajectories");
+      RCLCPP_INFO(this->get_logger(), "Planning candidate trajectories.");
     } while (!planTrajectories());
     setState(State::AWAITING_TRAJECTORY_SELECTION);
   } else {
-    trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock());
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 500,
       "Waiting for the vehicle to stop before generating a new trajectory.");
   }
 }
 
 void FreespacePlannerNode::handleAwaitingTrajectorySelection() 
-{}
+{
+  trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
+  
+  // If we receive a planning request, jump back to the planning 
+  if (replan_requested_) {
+    RCLCPP_INFO(get_logger(), "User requested planning.");
+    replan_requested_ = false;
+    setState(State::PLANNING);
+  }
+
+  // Handle selection of desired trajectory from the candidate trajectories 
+}
 void FreespacePlannerNode::handleExecutingTrajectory() 
 {}
 void FreespacePlannerNode::handleAwaitingAutomationHandover() 
@@ -442,6 +453,7 @@ bool FreespacePlannerNode::planTrajectories()
   const rclcpp::Time start = get_clock()->now();
   std::string error_msg;
   bool any_result = false;
+  candidate_trajectories_.candidate_trajectories.clear();
 
   for (const auto & goal_pose_in_costmap_frame : goal_poses_.poses) {
     try {
@@ -458,9 +470,9 @@ bool FreespacePlannerNode::planTrajectories()
       candidate_trajectory.header.frame_id = goal_poses_.header.frame_id;
       // candidate_trajectory.uuid = // TODO needed?
             
-      trajectory_ = utils::create_trajectory(current_pose_, algo_->getWaypoints(), node_param_.waypoints_velocity);
+      const auto tmp_trajectory_ = utils::create_trajectory(current_pose_, algo_->getWaypoints(), node_param_.waypoints_velocity);
 
-      candidate_trajectory.points = trajectory_.points;
+      candidate_trajectory.points = tmp_trajectory_.points;
 
       candidate_trajectories_.candidate_trajectories.push_back(candidate_trajectory);
 
