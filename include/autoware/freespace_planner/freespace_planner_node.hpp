@@ -52,6 +52,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/detail/trigger__struct.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -125,19 +126,17 @@ private:
   rclcpp::Publisher<Trajectory>::SharedPtr trajectory_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_goal_poses_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr current_state_pub_;
-  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
-    processing_time_pub_;
-  rclcpp::Publisher<CandidateTrajectories>::SharedPtr
-    candidate_trajectories_pub_;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr processing_time_pub_;
+  rclcpp::Publisher<CandidateTrajectories>::SharedPtr candidate_trajectories_pub_;
 
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr trajectory_identifier_sub_;
   rclcpp::Subscription<Path>::SharedPtr path_sub_;
-
-  rclcpp::Service<Trigger>::SharedPtr replan_srv_;
-
   autoware_utils::InterProcessPollingSubscriber<OccupancyGrid> occupancy_grid_sub_{
     this, "~/input/occupancy_grid"};
   autoware_utils::InterProcessPollingSubscriber<Odometry, autoware_utils::polling_policy::All>
     odom_sub_{this, "~/input/odometry", rclcpp::QoS{100}};
+    
+  rclcpp::Service<Trigger>::SharedPtr replan_srv_;
 
   rclcpp::TimerBase::SharedPtr timer_;
 
@@ -151,11 +150,8 @@ private:
   // variables
   std::unique_ptr<AbstractPlanningAlgorithm> algo_;
   PoseStamped current_pose_;
-  // std::vector<PoseStamped> goal_poses_;
   PoseArray goal_poses_;
   CandidateTrajectories candidate_trajectories_; 
-  // geometry_msgs::msg::PoseArray goal_poses_array_; // TODO implement later
-  // std::vector<float> goal_distances_along_path_ {25.0}; // TODO read in as param
   std::vector<float> goal_distances_along_path_ {15.0, 20.0, 25.0, 30.0, 35.0}; // TODO read in as param
 
   Trajectory trajectory_;
@@ -169,6 +165,7 @@ private:
   OccupancyGrid::ConstSharedPtr occupancy_grid_;
   Odometry::ConstSharedPtr odom_;
   std_msgs::msg::String state_msg_;
+  std::optional<size_t> desired_trajectory_index_;
 
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
 

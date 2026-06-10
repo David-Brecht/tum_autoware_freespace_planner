@@ -113,6 +113,16 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
   path_sub_ = create_subscription<Path>(
     "~/input/path", rclcpp::QoS{1}.durability_volatile(),
     std::bind(&FreespacePlannerNode::onPath, this, _1));
+  trajectory_identifier_sub_ = create_subscription<std_msgs::msg::Int32>(
+    "~/input/desired_trajectory_index", rclcpp::QoS{1}.durability_volatile(),
+    [this](const std_msgs::msg::Int32 & msg) {
+      if (msg.data < 0) {
+        desired_trajectory_index_.reset();
+        return;
+      }
+      desired_trajectory_index_ = static_cast<size_t>(msg.data);
+    }
+  );
 
   // Publishers
   {
@@ -373,12 +383,32 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
     RCLCPP_INFO(get_logger(), "User requested planning.");
     replan_requested_ = false;
     setState(State::PLANNING);
+    return;
   }
 
   // Handle selection of desired trajectory from the candidate trajectories 
+  // TODO - we likely need here a logic that compares timestamps of desired trajectory message and 
+  // trajectories to get a indication of where to set the goal point
+  if (!desired_trajectory_index_.has_value() || 
+    desired_trajectory_index_ >= candidate_trajectories_.candidate_trajectories.size()) {
+    RCLCPP_WARN(this->get_logger(), "Desired trajectory index either unset or too large.");
+    return;
+  }
+
+  RCLCPP_INFO(this->get_logger(), "Populating trajectory with data from candidate trajectory.");
+  trajectory_.header = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).header;
+  trajectory_.points = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).points;
+  setState(State::EXECUTING_TRAJECTORY);
 }
+
 void FreespacePlannerNode::handleExecutingTrajectory() 
-{}
+{
+  // Handle ... 
+  // Emergency brake
+  // Replanning, including the goal point and also repeated selection
+  // Transition to handle awaiting automation handover when near the goal point and stopped or handle planning when desired by the RO
+}
+
 void FreespacePlannerNode::handleAwaitingAutomationHandover() 
 {}
 void FreespacePlannerNode::handleAutomatedDriving() 
