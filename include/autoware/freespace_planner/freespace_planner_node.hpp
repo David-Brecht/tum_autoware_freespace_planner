@@ -52,6 +52,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/detail/trigger__struct.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <std_srvs/srv/trigger.hpp>
@@ -114,7 +115,7 @@ public:
     IDLE,
     PLANNING,
     AWAITING_TRAJECTORY_SELECTION,
-    EXECUTING,
+    EXECUTING_TRAJECTORY,
     AWAITING_AUTOMATION_HANDOVER,
     AUTOMATED_DRIVING
   };
@@ -122,8 +123,8 @@ public:
 private:
   // ros
   rclcpp::Publisher<Trajectory>::SharedPtr trajectory_pub_;
-  rclcpp::Publisher<PoseArray>::SharedPtr debug_pose_array_pub_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr parking_state_pub_;
+  rclcpp::Publisher<PoseArray>::SharedPtr debug_goal_poses_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr current_state_pub_;
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
     processing_time_pub_;
   rclcpp::Publisher<CandidateTrajectories>::SharedPtr
@@ -150,7 +151,8 @@ private:
   // variables
   std::unique_ptr<AbstractPlanningAlgorithm> algo_;
   PoseStamped current_pose_;
-  std::vector<PoseStamped> goal_poses_;
+  // std::vector<PoseStamped> goal_poses_;
+  PoseArray goal_poses_;
   CandidateTrajectories candidate_trajectories_; 
   // geometry_msgs::msg::PoseArray goal_poses_array_; // TODO implement later
   // std::vector<float> goal_distances_along_path_ {25.0}; // TODO read in as param
@@ -160,13 +162,13 @@ private:
   bool is_completed_ = false;
   // bool reset_in_progress_ = false;
   bool replan_requested_ = false;
+  bool obstacle_on_trajectory_;
   boost::optional<rclcpp::Time> obs_found_time_;
 
   Path::ConstSharedPtr path_;
   OccupancyGrid::ConstSharedPtr occupancy_grid_;
   Odometry::ConstSharedPtr odom_;
-
-  std::shared_ptr<autoware::route_handler::RouteHandler> route_handler_; // TODO not really needed?
+  std_msgs::msg::String state_msg_;
 
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
 
@@ -180,7 +182,7 @@ private:
   void onTimer();
   void updateData();
   void reset();
-  void planTrajectories();
+  bool planTrajectories();
   void initializePlanningAlgorithm();
   bool isDataReady();
 
@@ -197,9 +199,9 @@ private:
 
   TransformStamped getTransform(const std::string & from, const std::string & to);
 
-  static std::vector<geometry_msgs::msg::Pose> getGoalPoses(
-    const autoware_planning_msgs::msg::Path & path,
-    const geometry_msgs::msg::Pose & start_pose, 
+  static std::vector<Pose> getGoalPoses(
+    const Path & path,
+    const Pose & start_pose, 
     const std::vector<float> & distance_along_path);
 
   void onTriggerReplan(
@@ -208,11 +210,18 @@ private:
 
   std::unique_ptr<autoware_utils::LoggerLevelConfigure> logger_configure_;
 
-  // === Everything state management related =======================================================
+  // Checks if there is a persistent obstacle on the target trajectory; characterized through a pose array
+  bool hasPersistentObstacle(const std::vector<PoseArray> & pose_arrays);
+
   State state_{State::WAITING_FOR_INPUT};
   void setState(const State & target_state);
+  void handleWaitingForInput();
   void handleIdle();
-  void handleSampling();
+  void handlePlanning();
+  void handleAwaitingTrajectorySelection();
+  void handleExecutingTrajectory();
+  void handleAwaitingAutomationHandover();
+  void handleAutomatedDriving();
   
 
   friend class ::TestFreespacePlanner;

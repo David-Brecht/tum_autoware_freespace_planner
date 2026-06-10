@@ -52,24 +52,26 @@ namespace autoware::freespace_planner
 
 namespace {
 
-  // TODO make adhere to the current struct definition
 const char * toString(const FreespacePlannerNode::State state) {
   switch (state) {
+    case FreespacePlannerNode::State::WAITING_FOR_INPUT:
+      return "WAITING_FOR_INPUT";
     case FreespacePlannerNode::State::IDLE:
       return "IDLE";
-    case FreespacePlannerNode::State::SAMPLING:
-      return "SAMPLING";
-    case FreespacePlannerNode::State::AWAIT_TRAJECTORY_SELECTION:
-      return "AWAIT_TRAJECTORY_SELECTION";
-    case FreespacePlannerNode::State::EXECUTING:
-      return "EXECUTING";
-    case FreespacePlannerNode::State::AWAIT_AUTOMATION_HANDOVER:
-      return "AWAIT_AUTOMATION_HANDOVER";
+    case FreespacePlannerNode::State::PLANNING:
+      return "PLANNING";
+    case FreespacePlannerNode::State::AWAITING_TRAJECTORY_SELECTION:
+      return "AWAITING_TRAJECTORY_SELECTION";
+    case FreespacePlannerNode::State::EXECUTING_TRAJECTORY:
+      return "EXECUTING_TRAJECTORY";
+    case FreespacePlannerNode::State::AWAITING_AUTOMATION_HANDOVER:
+      return "AWAITING_AUTOMATION_HANDOVER";
     case FreespacePlannerNode::State::AUTOMATED_DRIVING:
       return "AUTOMATED_DRIVING";
   }
   return "UNKNOWN";
 }
+
 }
 
 FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_options)
@@ -118,8 +120,8 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     qos.transient_local();  // latch
     trajectory_pub_ = create_publisher<Trajectory>("~/output/trajectory", qos);
     candidate_trajectories_pub_ = create_publisher<CandidateTrajectories>("~/output/candidate_trajectories", qos);
-    debug_pose_array_pub_ = create_publisher<PoseArray>("~/debug/pose_array", qos);
-    parking_state_pub_ = create_publisher<std_msgs::msg::Bool>("is_completed", qos);
+    debug_goal_poses_pub_ = create_publisher<PoseArray>("~/debug/goal_poses", qos);
+    current_state_pub_ = create_publisher<std_msgs::msg::String>("~/output/current_state", qos);
     processing_time_pub_ = create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
       "~/debug/processing_time_ms", 1);
   }
@@ -142,6 +144,7 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
   }
 
   logger_configure_ = std::make_unique<autoware_utils::LoggerLevelConfigure>(this);
+  state_msg_.data = "UNDEFINED";
 }
 
 PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
@@ -169,54 +172,55 @@ PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
 
 bool FreespacePlannerNode::isPlanRequired()
 {
-  if (replan_requested_) {
-    RCLCPP_INFO(get_logger(), "User requested planning.");
-    replan_requested_ = false;
-    return true;
-  }
+  // if (replan_requested_) {
+  //   RCLCPP_INFO(get_logger(), "User requested planning.");
+  //   replan_requested_ = false;
+  //   return true;
+  // }
 
-  if (candidate_trajectories_.candidate_trajectories.empty()) {
-    RCLCPP_INFO(get_logger(), "No candidate trajectories. Triggering planning.");
-    return true;
-  }
+  // if (candidate_trajectories_.candidate_trajectories.empty()) {
+  //   RCLCPP_INFO(get_logger(), "No candidate trajectories. Triggering planning.");
+  //   return true;
+  // }
 
-  if (node_param_.replan_when_obstacle_found && checkCurrentTrajectoryCollision()) {
-    RCLCPP_INFO(get_logger(), "Found obstacle on trajectory. Triggering planning.");
-    return true;
-  }
+  // if (node_param_.replan_when_obstacle_found && hasPersistentObstacle()) {
+  //   RCLCPP_INFO(get_logger(), "Found obstacle on trajectory. Triggering planning.");
+  //   return true;
+  // }
 
-  if (node_param_.replan_when_course_out) {
-    const bool is_course_out = utils::calc_distance_2d(trajectory_, current_pose_.pose) >
-                               node_param_.th_course_out_distance_m;
-    if (is_course_out) {
-      RCLCPP_INFO(get_logger(), "Out of course. Triggering planning.");
-      return true;
-    }
-  }
+  // if (node_param_.replan_when_course_out) {
+  //   const bool is_course_out = utils::calc_distance_2d(trajectory_, current_pose_.pose) >
+  //                              node_param_.th_course_out_distance_m;
+  //   if (is_course_out) {
+  //     RCLCPP_INFO(get_logger(), "Out of course. Triggering planning.");
+  //     return true;
+  //   }
+  // }
 
   return false;
 }
 
-// TODO - make this work again but now with the candidate trajectories (in initial stage) or the actual trajectory (execution stage)
-// Check - somhow this function works but this is unexpected behavior
-bool FreespacePlannerNode::checkCurrentTrajectoryCollision()
+bool FreespacePlannerNode::hasPersistentObstacle(const std::vector<PoseArray> & pose_arrays)
 {
-  algo_->setMap(*occupancy_grid_);
-
-  // TODO loop over trjectory / candidate trajectories
-  // Remove forward_trajectory in favor of the candidates / single trajectory
-  const bool is_obs_found =
-    algo_->hasObstacleOnTrajectory(utils::trajectory_to_pose_array(forward_trajectory)); 
-
-  if (!is_obs_found) {
-    obs_found_time_ = {};
+  if (!occupancy_grid_) {
+    RCLCPP_ERROR(this->get_logger(), "Function called without valid occupancy grid map.");
     return false;
   }
 
+  algo_->setMap(*occupancy_grid_);
+  
+  const bool any_blocked = std::any_of(pose_arrays.begin(), pose_arrays.end(),
+        [&](const PoseArray & pa) { return algo_->hasObstacleOnTrajectory(pa); });
+
+  if (!any_blocked) { 
+    obs_found_time_ = {}; 
+    return false; 
+  }
+  
   if (!obs_found_time_) {
     obs_found_time_ = get_clock()->now();
   }
-
+  
   return (get_clock()->now() - obs_found_time_.get()).seconds() > node_param_.th_obstacle_time_sec;
 }
 
@@ -235,30 +239,21 @@ void FreespacePlannerNode::updateData()
 void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
 {
   if (!odom_) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000,
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
       "Received path before odometry. Ignoring path and not computing goal points.");
     return;
   }
+
   path_ = msg;
 
-  const auto goal_poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
-
-  goal_poses_.clear();
-  goal_poses_.reserve(goal_poses.size());
-
-  // TODO this is ugly still. Better use geometry_msgs/PoseArray or similar for this. also, the seperation between onPath and getGoalPoses could be better
-  for (const auto & goal_pose : goal_poses) {
-    auto & stamped_pose = goal_poses_.emplace_back();
-    stamped_pose.header = msg->header;
-    stamped_pose.pose = goal_pose;
-  }
+  goal_poses_.header = msg->header;
+  goal_poses_.poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
 }
 
 void FreespacePlannerNode::onOdometry(const Odometry::ConstSharedPtr msg)
 {
-  if (odom_->header.frame_id == "") {
-    RCLCPP_WARN(this->get_logger(), "Odometry does not provide reference frame in header.")
+  if (msg->header.frame_id == "") {
+    RCLCPP_WARN(this->get_logger(), "Odometry does not provide reference frame in header.");
   }
 
   odom_ = msg;
@@ -312,7 +307,8 @@ std::vector<Pose> FreespacePlannerNode::getGoalPoses(const Path & path, const Po
 // =================================================================================================
 // === Methods related to handling states and their transitions ====================================
 // =================================================================================================
-void FreespacePlannerNode::handleWaitingForInput() {
+void FreespacePlannerNode::handleWaitingForInput() 
+{
   if (isDataReady()) {
     setState(State::IDLE);
   }
@@ -340,25 +336,43 @@ bool FreespacePlannerNode::isDataReady()
   return is_ready;
 }
 
-void FreespacePlannerNode::handleIdle() {
-    // TODO publish stop trajectory
-    // publishStopTrajectory();
-     
+void FreespacePlannerNode::handleIdle() 
+{
+  trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock());
+  if (replan_requested_) {
+    RCLCPP_INFO(get_logger(), "User requested planning.");
+    replan_requested_ = false;
+    setState(State::PLANNING);
+  }     
 }
 
-void FreespacePlannerNode::handlePlanning() {
+void FreespacePlannerNode::handlePlanning() 
+{
   const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
   if (is_ego_stopped) {
-    RCLCPP_INFO(this->get_logger(), "Planning new candidate trajectories");
-    planTrajectories();
-    // reset_in_progress_ = false;
+    // TODO right now we are searching until a candidate will be found. But there might be 
+    // scenarios where no trajectory candidate can be found → we are stuck. Solve this via waypoint 
+    // guidance or similar
+    do {
+      RCLCPP_INFO(this->get_logger(), "Planning new candidate trajectories");
+    } while (!planTrajectories());
+    setState(State::AWAITING_TRAJECTORY_SELECTION);
   } else {
-    // TODO Publish stop trajectory here
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 1000,
+    trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock());
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
       "Waiting for the vehicle to stop before generating a new trajectory.");
   }
 }
+
+void FreespacePlannerNode::handleAwaitingTrajectorySelection() 
+{}
+void FreespacePlannerNode::handleExecutingTrajectory() 
+{}
+void FreespacePlannerNode::handleAwaitingAutomationHandover() 
+{}
+void FreespacePlannerNode::handleAutomatedDriving() 
+{}
+  
 
 // =================================================================================================
 // === Timer with state management =================================================================
@@ -376,107 +390,72 @@ void FreespacePlannerNode::onTimer()
     case State::IDLE:
       handleIdle();
       break;
+    case State::PLANNING:
+      handlePlanning();
+      break;
+    case State::AWAITING_TRAJECTORY_SELECTION:
+      handleAwaitingTrajectorySelection();
+      break;
+    case State::EXECUTING_TRAJECTORY:
+      handleExecutingTrajectory();
+      break;
+    case State::AWAITING_AUTOMATION_HANDOVER:
+      handleAwaitingAutomationHandover();
+      break;
+    case State::AUTOMATED_DRIVING:
+      handleAutomatedDriving();
+      break;
     default:
       RCLCPP_INFO(this->get_logger(), "No state identified.\n");
   }
 
-
-  // if (is_completed_ && !replan_requested_) {
-  //   partial_trajectory_.header = odom_->header;
-  //   const auto stop_trajectory = utils::create_stop_trajectory(partial_trajectory_);
-  //   trajectory_pub_->publish(stop_trajectory);
-  //   return;
-  // }
-
-  // // Must stop before replanning any new trajectory
-  // const bool is_reset_required = !reset_in_progress_ && isPlanRequired();
-  // if (is_reset_required) {
-  //   // Stop before planning new trajectory, except in a new parking cycle as the vehicle already
-  //   // stops.
-  //   if (!is_new_parking_cycle_) {
-  //     const auto stop_trajectory = partial_trajectory_.points.empty()
-  //                                    ? utils::create_stop_trajectory(current_pose_, get_clock())
-  //                                    : utils::create_stop_trajectory(partial_trajectory_);
-  //     trajectory_pub_->publish(stop_trajectory);
-  //     debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
-  //     debug_partial_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
-  //   }
-
-  //   reset();
-
-  //   reset_in_progress_ = true;
-  // }
-
-  // if (reset_in_progress_) {
-  //   const auto is_ego_stopped =
-  //     utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
-  //   if (is_ego_stopped) {
-  //     // Plan new trajectory
-  //     RCLCPP_INFO(this->get_logger(), "planning new trajectories");
-  //     planTrajectories();
-  //     reset_in_progress_ = false;
-  //   } else {
-  //     // Will keep current stop trajectory
-  //     RCLCPP_WARN_THROTTLE(
-  //       get_logger(), *get_clock(), 1000,
-  //       "Waiting for the vehicle to stop before generating a new trajectory.");
-  //   }
-  // }
-
-  // StopTrajectory
-  if (trajectory_.points.size() <= 1) {
-    return;
-  }
-
-  // Publish messages
+  // TODO - publish the topics here or in the states themselve? 
   trajectory_pub_->publish(trajectory_);
   candidate_trajectories_pub_->publish(candidate_trajectories_);
-  debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(trajectory_));
+  debug_goal_poses_pub_->publish(goal_poses_);
+  current_state_pub_->publish(state_msg_);
 
-  // Publish ProcessingTime
   autoware_internal_debug_msgs::msg::Float64Stamped processing_time_msg;
   processing_time_msg.stamp = get_clock()->now();
   processing_time_msg.data = stop_watch.toc();
   processing_time_pub_->publish(processing_time_msg);
 }
 
-void FreespacePlannerNode::planTrajectories()
+bool FreespacePlannerNode::planTrajectories()
 {
+  if (!occupancy_grid_) {
+    RCLCPP_ERROR(this->get_logger(), "Function called without valid occupancy grid map.");
+    return false;
+  }
+
   algo_->setMap(*occupancy_grid_);
 
   const auto current_pose_in_costmap_frame = utils::transform_pose(
     current_pose_.pose,
     getTransform(occupancy_grid_->header.frame_id, current_pose_.header.frame_id));
 
-  // TODO construce an geometry_msgs/PoseArray here or use it as an clean data type and publish to view in rviz 
-
-  std::vector<geometry_msgs::msg::PoseStamped> goal_poses_in_costmap_frame;
-  for (const auto & goal_pose: goal_poses_) {
-    const Pose goal_pose_in_costmap_frame = utils::transform_pose(
-      goal_pose.pose, getTransform(occupancy_grid_->header.frame_id, goal_pose.header.frame_id));
-    PoseStamped goal_pose_in_costmap_frame_stamped;
-    goal_pose_in_costmap_frame_stamped.header = goal_pose.header;
-    goal_pose_in_costmap_frame_stamped.pose = goal_pose_in_costmap_frame;
-    goal_poses_in_costmap_frame.push_back(goal_pose_in_costmap_frame_stamped);
+  if (occupancy_grid_->header.frame_id != goal_poses_.header.frame_id) {
+    RCLCPP_ERROR_STREAM(this->get_logger(), "Costmap frame (" << occupancy_grid_->header.frame_id 
+      << " ) and goal poses frame (" << goal_poses_.header.frame_id << ") are different. returning.");
   }
 
-  // execute planning
   const rclcpp::Time start = get_clock()->now();
   std::string error_msg;
   bool any_result = false;
 
-  for (const auto & goal_pose_in_costmap_frame : goal_poses_in_costmap_frame) {
+  for (const auto & goal_pose_in_costmap_frame : goal_poses_.poses) {
     try {
-      const bool result = algo_->makePlan(current_pose_in_costmap_frame, goal_pose_in_costmap_frame.pose);
+      const bool result = algo_->makePlan(current_pose_in_costmap_frame, goal_pose_in_costmap_frame);
 
       if(!result) {
         continue;
       }
+
       any_result = true;
 
       autoware_internal_planning_msgs::msg::CandidateTrajectory candidate_trajectory;
       candidate_trajectory.header.stamp = start; // simplification
-      candidate_trajectory.header.frame_id = goal_pose_in_costmap_frame.header.frame_id;
+      candidate_trajectory.header.frame_id = goal_poses_.header.frame_id;
       // candidate_trajectory.uuid = // TODO needed?
             
       trajectory_ = utils::create_trajectory(current_pose_, algo_->getWaypoints(), node_param_.waypoints_velocity);
@@ -485,6 +464,7 @@ void FreespacePlannerNode::planTrajectories()
 
       candidate_trajectories_.candidate_trajectories.push_back(candidate_trajectory);
 
+      // TODO remove after testing
       // RCLCPP_INFO_STREAM(this->get_logger(), "Found goal for goal pose (x = " << goal_pose_in_costmap_frame.pose.position.x << " | y = " << goal_pose_in_costmap_frame.pose.position.y << ")\n");
     } catch (const std::exception & e) {
       error_msg = e.what();
@@ -497,6 +477,8 @@ void FreespacePlannerNode::planTrajectories()
     RCLCPP_INFO(get_logger(), "Can't find goal: %s", error_msg.c_str());
     reset();
   }
+
+  return any_result;
 }
 
 void FreespacePlannerNode::reset()
@@ -506,7 +488,6 @@ void FreespacePlannerNode::reset()
   is_completed_ = false;
   std_msgs::msg::Bool is_completed_msg;
   is_completed_msg.data = is_completed_;
-  parking_state_pub_->publish(is_completed_msg);
   obs_found_time_ = {};
 }
 
@@ -522,13 +503,17 @@ TransformStamped FreespacePlannerNode::getTransform(
   return tf;
 }
 
-void FreespacePlannerNode::setState(const State target_state) {
+void FreespacePlannerNode::setState(const State & target_state) 
+{
   if (target_state == state_) {
-    RCLCPP_INFO_STREAM(this->get_logger(), "Target state is current state. Check state management!")
+    RCLCPP_INFO_STREAM(this->get_logger(), "Target state is current state. Check state management!");
   }
 
   RCLCPP_INFO_STREAM(this->get_logger(), "State transition: " << toString(state_) << " to " << toString(target_state));
+  
   state_ = target_state;
+  
+  state_msg_.data = toString(state_);
 }
 
 void FreespacePlannerNode::initializePlanningAlgorithm()

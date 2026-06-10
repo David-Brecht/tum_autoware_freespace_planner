@@ -10,6 +10,9 @@
   <!-- vehicle info -->
   <arg name="vehicle_info_param_file" default="$(find-pkg-share autoware_vehicle_info_utils)/config/vehicle_info.param.yaml"/>
 
+  <!-- TODO delete this line before deployment -->
+  <node pkg="tum_autoware_freespace_planner" exec="trajectory_selector_gui.py" name="trajectory_selector_gui" output="screen"/>
+
   <node pkg="tum_autoware_freespace_planner" exec="freespace_planner" namespace="/external/remote" name="freespace_planner" output="screen">
     <remap from="~/input/path" to="$(var input_path)"/>
     <remap from="~/input/occupancy_grid" to="$(var input_occupancy_grid)"/>

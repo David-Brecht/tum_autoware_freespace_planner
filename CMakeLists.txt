@@ -41,6 +41,12 @@ if(BUILD_TESTING)
 
 endif()
 
+## TODO delete this for deployment
+install(PROGRAMS
+  scripts/trajectory_selector_gui.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 autoware_ament_auto_package(
   INSTALL_TO_SHARE
   launch
