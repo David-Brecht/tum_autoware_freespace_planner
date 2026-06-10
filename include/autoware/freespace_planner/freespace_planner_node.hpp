@@ -105,19 +105,19 @@ struct NodeParam
   bool replan_when_course_out;
 };
 
-enum class States {
-  IDLE,
-  SAMPLING,
-  AWAIT_TRAJECTORY_SELECTION,
-  EXECUTING,
-  AWAIT_AUTOMATION_HANDOVER,
-  AUTOMATED_DRIVING
-};
-
 class FreespacePlannerNode : public rclcpp::Node
 {
 public:
   explicit FreespacePlannerNode(const rclcpp::NodeOptions & node_options);
+  enum class State {
+    WAITING_FOR_INPUT,
+    IDLE,
+    PLANNING,
+    AWAITING_TRAJECTORY_SELECTION,
+    EXECUTING,
+    AWAITING_AUTOMATION_HANDOVER,
+    AUTOMATED_DRIVING
+  };
 
 private:
   // ros
@@ -163,7 +163,7 @@ private:
   size_t prev_target_index_ = 0;
   size_t target_index_ = 0;
   bool is_completed_ = false;
-  bool reset_in_progress_ = false;
+  // bool reset_in_progress_ = false;
   bool is_new_parking_cycle_ = true;
   bool replan_requested_ = false;
   boost::optional<rclcpp::Time> obs_found_time_;
@@ -224,7 +224,7 @@ private:
 
   TransformStamped getTransform(const std::string & from, const std::string & to);
 
-  static std::vector<geometry_msgs::msg::Pose> get_goal_poses(
+  static std::vector<geometry_msgs::msg::Pose> getGoalPoses(
     const autoware_planning_msgs::msg::Path & path,
     const geometry_msgs::msg::Pose & start_pose, 
     const std::vector<float> & distance_along_path);
@@ -234,6 +234,13 @@ private:
     std::shared_ptr<Trigger::Response> response);
 
   std::unique_ptr<autoware_utils::LoggerLevelConfigure> logger_configure_;
+
+  // === Everything state management related =======================================================
+  State state_{State::WAITING_FOR_INPUT};
+  void setState(const State & target_state);
+  void handleIdle();
+  void handleSampling();
+  
 
   friend class ::TestFreespacePlanner;
 };

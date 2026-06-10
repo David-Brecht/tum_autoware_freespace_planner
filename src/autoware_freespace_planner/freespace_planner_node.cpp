@@ -38,8 +38,7 @@
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
-#include <autoware_internal_planning_msgs/msg/detail/candidate_trajectories__struct.hpp>
-#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
+#include <rclcpp/logging.hpp>
 
 #include <algorithm>
 #include <deque>
@@ -50,6 +49,29 @@
 
 namespace autoware::freespace_planner
 {
+
+namespace {
+
+  // TODO make adhere to the current struct definition
+const char * toString(const FreespacePlannerNode::State state) {
+  switch (state) {
+    case FreespacePlannerNode::State::IDLE:
+      return "IDLE";
+    case FreespacePlannerNode::State::SAMPLING:
+      return "SAMPLING";
+    case FreespacePlannerNode::State::AWAIT_TRAJECTORY_SELECTION:
+      return "AWAIT_TRAJECTORY_SELECTION";
+    case FreespacePlannerNode::State::EXECUTING:
+      return "EXECUTING";
+    case FreespacePlannerNode::State::AWAIT_AUTOMATION_HANDOVER:
+      return "AWAIT_AUTOMATION_HANDOVER";
+    case FreespacePlannerNode::State::AUTOMATED_DRIVING:
+      return "AUTOMATED_DRIVING";
+  }
+  return "UNKNOWN";
+}
+}
+
 FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_options)
 : Node("freespace_planner", node_options)
 {
@@ -148,14 +170,14 @@ PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
 
 bool FreespacePlannerNode::isPlanRequired()
 {
-  if (candidate_trajectories_.candidate_trajectories.empty()) {
-    RCLCPP_INFO(get_logger(), "No candidate trajectories. Triggering planning.");
-    return true;
-  }
-
   if (replan_requested_) {
     RCLCPP_INFO(get_logger(), "User requested planning.");
     replan_requested_ = false;
+    return true;
+  }
+
+  if (candidate_trajectories_.candidate_trajectories.empty()) {
+    RCLCPP_INFO(get_logger(), "No candidate trajectories. Triggering planning.");
     return true;
   }
 
@@ -231,6 +253,18 @@ void FreespacePlannerNode::updateTargetIndex()
   }
 }
 
+void FreespacePlannerNode::updateData()
+{
+  occupancy_grid_ = occupancy_grid_sub_.take_data();
+
+  {
+    auto msgs = odom_sub_.take_data();
+    for (const auto & msg : msgs) {
+      onOdometry(msg);
+    }
+  }
+}
+
 void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
 {
   if (!odom_) {
@@ -241,12 +275,12 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
   }
   path_ = msg;
 
-  const auto goal_poses = get_goal_poses(*msg, odom_->pose.pose, goal_distances_along_path_);
+  const auto goal_poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
 
   goal_poses_.clear();
   goal_poses_.reserve(goal_poses.size());
 
-  // TODO this is ugly still. Better use geometry_msgs/PoseArray or similar for this. also, the seperation between onPath and get_goal_poses could be better
+  // TODO this is ugly still. Better use geometry_msgs/PoseArray or similar for this. also, the seperation between onPath and getGoalPoses could be better
   for (const auto & goal_pose : goal_poses) {
     auto & stamped_pose = goal_poses_.emplace_back();
     stamped_pose.header = msg->header;
@@ -256,25 +290,16 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
   is_new_parking_cycle_ = true;
 }
 
-static std::vector<Pose> FreespacePlannerNode::get_goal_poses(const Path & path, const Pose & start_pose, const std::vector<float> & distance_along_path)
-{
-  std::vector<Pose> goal_poses;
-  goal_poses.reserve(distance_along_path.size());
-  const size_t pose_idx = autoware::motion_utils::findNearestIndex(path.points, start_pose.position);
-
-  std::vector<PathPoint> points_from_start (path.points.begin()+pose_idx, path.points.end());
-
-  for (const auto & distance : distance_along_path) {
-    Pose pose = autoware::motion_utils::calcInterpolatedPose(points_from_start, distance);
-    goal_poses.push_back(pose);
-  }
-
-  return goal_poses;
-}
-
 void FreespacePlannerNode::onOdometry(const Odometry::ConstSharedPtr msg)
 {
+  if (odom_->header.frame_id == "") {
+    RCLCPP_WARN(this->get_logger(), "Odometry does not provide reference frame in header.")
+  }
+
   odom_ = msg;
+
+  current_pose_.pose = odom_->pose.pose;
+  current_pose_.header = odom_->header; 
 
   odom_buffer_.push_back(msg);
 
@@ -303,15 +328,28 @@ void FreespacePlannerNode::onTriggerReplan(
   response->message = "Replanning requested.";
 }
 
-void FreespacePlannerNode::updateData()
+std::vector<Pose> FreespacePlannerNode::getGoalPoses(const Path & path, const Pose & start_pose, const std::vector<float> & distance_along_path)
 {
-  occupancy_grid_ = occupancy_grid_sub_.take_data();
+  std::vector<Pose> goal_poses;
+  goal_poses.reserve(distance_along_path.size());
+  const size_t pose_idx = autoware::motion_utils::findNearestIndex(path.points, start_pose.position);
 
-  {
-    auto msgs = odom_sub_.take_data();
-    for (const auto & msg : msgs) {
-      onOdometry(msg);
-    }
+  std::vector<PathPoint> points_from_start (path.points.begin()+pose_idx, path.points.end());
+
+  for (const auto & distance : distance_along_path) {
+    Pose pose = autoware::motion_utils::calcInterpolatedPose(points_from_start, distance);
+    goal_poses.push_back(pose);
+  }
+
+  return goal_poses;
+}
+
+// =================================================================================================
+// === Methods related to handling states and their transitions ====================================
+// =================================================================================================
+void FreespacePlannerNode::handleWaitingForInput() {
+  if (isDataReady()) {
+    setState(State::IDLE);
   }
 }
 
@@ -337,65 +375,88 @@ bool FreespacePlannerNode::isDataReady()
   return is_ready;
 }
 
+void FreespacePlannerNode::handleIdle() {
+    // TODO publish stop trajectory
+    // publishStopTrajectory();
+     
+}
+
+void FreespacePlannerNode::handlePlanning() {
+  const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
+  if (is_ego_stopped) {
+    RCLCPP_INFO(this->get_logger(), "Planning new candidate trajectories");
+    planTrajectories();
+    // reset_in_progress_ = false;
+  } else {
+    // Will keep current stop trajectory
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Waiting for the vehicle to stop before generating a new trajectory.");
+  }
+}
+
+// =================================================================================================
+// === Timer with state management =================================================================
+// =================================================================================================
 void FreespacePlannerNode::onTimer()
 {
   autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
 
   updateData();
 
-  if (!isDataReady()) {
-    return;
+  switch (state_) {
+    case State::WAITING_FOR_INPUT:
+      handleWaitingForInput();
+      break;
+    case State::IDLE:
+      handleIdle();
+      break;
+    default:
+      RCLCPP_INFO(this->get_logger(), "No state identified.\n");
   }
 
-  if (is_completed_ && !replan_requested_) {
-    partial_trajectory_.header = odom_->header;
-    const auto stop_trajectory = utils::create_stop_trajectory(partial_trajectory_);
-    trajectory_pub_->publish(stop_trajectory);
-    return;
-  }
 
-  // Get current pose
-  current_pose_.pose = odom_->pose.pose;
-  current_pose_.header = odom_->header; 
+  // if (is_completed_ && !replan_requested_) {
+  //   partial_trajectory_.header = odom_->header;
+  //   const auto stop_trajectory = utils::create_stop_trajectory(partial_trajectory_);
+  //   trajectory_pub_->publish(stop_trajectory);
+  //   return;
+  // }
 
-  if (current_pose_.header.frame_id == "") {
-    return;
-  }
+  // // Must stop before replanning any new trajectory
+  // const bool is_reset_required = !reset_in_progress_ && isPlanRequired();
+  // if (is_reset_required) {
+  //   // Stop before planning new trajectory, except in a new parking cycle as the vehicle already
+  //   // stops.
+  //   if (!is_new_parking_cycle_) {
+  //     const auto stop_trajectory = partial_trajectory_.points.empty()
+  //                                    ? utils::create_stop_trajectory(current_pose_, get_clock())
+  //                                    : utils::create_stop_trajectory(partial_trajectory_);
+  //     trajectory_pub_->publish(stop_trajectory);
+  //     debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
+  //     debug_partial_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
+  //   }
 
-  // Must stop before replanning any new trajectory
-  const bool is_reset_required = !reset_in_progress_ && isPlanRequired();
-  if (is_reset_required) {
-    // Stop before planning new trajectory, except in a new parking cycle as the vehicle already
-    // stops.
-    if (!is_new_parking_cycle_) {
-      const auto stop_trajectory = partial_trajectory_.points.empty()
-                                     ? utils::create_stop_trajectory(current_pose_, get_clock())
-                                     : utils::create_stop_trajectory(partial_trajectory_);
-      trajectory_pub_->publish(stop_trajectory);
-      debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
-      debug_partial_pose_array_pub_->publish(utils::trajectory_to_pose_array(stop_trajectory));
-    }
+  //   reset();
 
-    reset();
+  //   reset_in_progress_ = true;
+  // }
 
-    reset_in_progress_ = true;
-  }
-
-  if (reset_in_progress_) {
-    const auto is_ego_stopped =
-      utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
-    if (is_ego_stopped) {
-      // Plan new trajectory
-      RCLCPP_INFO(this->get_logger(), "planning new trajectories");
-      planTrajectories();
-      reset_in_progress_ = false;
-    } else {
-      // Will keep current stop trajectory
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 1000,
-        "Waiting for the vehicle to stop before generating a new trajectory.");
-    }
-  }
+  // if (reset_in_progress_) {
+  //   const auto is_ego_stopped =
+  //     utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
+  //   if (is_ego_stopped) {
+  //     // Plan new trajectory
+  //     RCLCPP_INFO(this->get_logger(), "planning new trajectories");
+  //     planTrajectories();
+  //     reset_in_progress_ = false;
+  //   } else {
+  //     // Will keep current stop trajectory
+  //     RCLCPP_WARN_THROTTLE(
+  //       get_logger(), *get_clock(), 1000,
+  //       "Waiting for the vehicle to stop before generating a new trajectory.");
+  //   }
+  // }
 
   // StopTrajectory
   if (trajectory_.points.size() <= 1) {
@@ -425,14 +486,8 @@ void FreespacePlannerNode::onTimer()
 
 void FreespacePlannerNode::planTrajectories()
 {
-  if (occupancy_grid_ == nullptr) {
-    return;
-  }
-
-  // Provide robot shape and map for the planner
   algo_->setMap(*occupancy_grid_);
 
-  // Calculate poses in costmap frame
   const auto current_pose_in_costmap_frame = utils::transform_pose(
     current_pose_.pose,
     getTransform(occupancy_grid_->header.frame_id, current_pose_.header.frame_id));
@@ -520,6 +575,15 @@ TransformStamped FreespacePlannerNode::getTransform(
     RCLCPP_ERROR(get_logger(), "%s", ex.what());
   }
   return tf;
+}
+
+void FreespacePlannerNode::setState(const State target_state) {
+  if (target_state == state_) {
+    RCLCPP_INFO_STREAM(this->get_logger(), "Target state is current state. Check state management!")
+  }
+
+  RCLCPP_INFO_STREAM(this->get_logger(), "State transition: " << toString(state_) << " to " << toString(target_state));
+  state_ = target_state;
 }
 
 void FreespacePlannerNode::initializePlanningAlgorithm()
