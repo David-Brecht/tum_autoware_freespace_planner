@@ -119,7 +119,6 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     trajectory_pub_ = create_publisher<Trajectory>("~/output/trajectory", qos);
     candidate_trajectories_pub_ = create_publisher<CandidateTrajectories>("~/output/candidate_trajectories", qos);
     debug_pose_array_pub_ = create_publisher<PoseArray>("~/debug/pose_array", qos);
-    debug_partial_pose_array_pub_ = create_publisher<PoseArray>("~/debug/partial_pose_array", qos);
     parking_state_pub_ = create_publisher<std_msgs::msg::Bool>("is_completed", qos);
     processing_time_pub_ = create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
       "~/debug/processing_time_ms", 1);
@@ -204,53 +203,21 @@ bool FreespacePlannerNode::checkCurrentTrajectoryCollision()
 {
   algo_->setMap(*occupancy_grid_);
 
-  const size_t nearest_index_partial = autoware::motion_utils::findNearestIndex(
-    partial_trajectory_.points, current_pose_.pose.position);
-  const size_t end_index_partial = partial_trajectory_.points.size() - 1;
-  const auto forward_trajectory = utils::get_partial_trajectory(
-    partial_trajectory_, nearest_index_partial, end_index_partial, get_clock());
-
+  // TODO loop over trjectory / candidate trajectories
+  // Remove forward_trajectory in favor of the candidates / single trajectory
   const bool is_obs_found =
-    algo_->hasObstacleOnTrajectory(utils::trajectory_to_pose_array(forward_trajectory));
+    algo_->hasObstacleOnTrajectory(utils::trajectory_to_pose_array(forward_trajectory)); 
 
   if (!is_obs_found) {
     obs_found_time_ = {};
     return false;
   }
 
-  if (!obs_found_time_) obs_found_time_ = get_clock()->now();
+  if (!obs_found_time_) {
+    obs_found_time_ = get_clock()->now();
+  }
 
   return (get_clock()->now() - obs_found_time_.get()).seconds() > node_param_.th_obstacle_time_sec;
-}
-
-// TODO this is likely not needed?
-void FreespacePlannerNode::updateTargetIndex()
-{
-  if (!utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps)) {
-    return;
-  }
-
-  const auto is_near_target = utils::is_near_target(
-    trajectory_.points.at(target_index_).pose, current_pose_.pose,
-    node_param_.th_arrived_distance_m);
-
-  if (!is_near_target) return;
-
-  const auto new_target_index =
-    utils::get_next_target_index(trajectory_.points.size(), reversing_indices_, target_index_);
-
-  if (new_target_index == target_index_) {
-    // Finished publishing all partial trajectories
-    is_completed_ = true;
-    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Freespace planning completed");
-    std_msgs::msg::Bool is_completed_msg;
-    is_completed_msg.data = is_completed_;
-    parking_state_pub_->publish(is_completed_msg);
-  } else {
-    // Switch to next partial trajectory
-    prev_target_index_ = target_index_;
-    target_index_ = new_target_index;
-  }
 }
 
 void FreespacePlannerNode::updateData()
@@ -286,8 +253,6 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
     stamped_pose.header = msg->header;
     stamped_pose.pose = goal_pose;
   }
-  // TODO remove any parking references
-  is_new_parking_cycle_ = true;
 }
 
 void FreespacePlannerNode::onOdometry(const Odometry::ConstSharedPtr msg)
@@ -460,22 +425,13 @@ void FreespacePlannerNode::onTimer()
 
   // StopTrajectory
   if (trajectory_.points.size() <= 1) {
-    is_new_parking_cycle_ = false;
     return;
   }
 
-  // Update partial trajectory
-  updateTargetIndex();
-  partial_trajectory_ =
-    utils::get_partial_trajectory(trajectory_, prev_target_index_, target_index_, get_clock());
-
   // Publish messages
-  trajectory_pub_->publish(partial_trajectory_);
+  trajectory_pub_->publish(trajectory_);
   candidate_trajectories_pub_->publish(candidate_trajectories_);
   debug_pose_array_pub_->publish(utils::trajectory_to_pose_array(trajectory_));
-  debug_partial_pose_array_pub_->publish(utils::trajectory_to_pose_array(partial_trajectory_));
-
-  is_new_parking_cycle_ = false;
 
   // Publish ProcessingTime
   autoware_internal_debug_msgs::msg::Float64Stamped processing_time_msg;
@@ -525,8 +481,6 @@ void FreespacePlannerNode::planTrajectories()
             
       trajectory_ = utils::create_trajectory(current_pose_, algo_->getWaypoints(), node_param_.waypoints_velocity);
 
-      // TODO maybe with the utils::get_reversing_indices() rule out those trajectories that hava a significant backward motion
-      
       candidate_trajectory.points = trajectory_.points;
 
       candidate_trajectories_.candidate_trajectories.push_back(candidate_trajectory);
@@ -539,12 +493,7 @@ void FreespacePlannerNode::planTrajectories()
   const rclcpp::Time end = get_clock()->now();
   RCLCPP_INFO(get_logger(), "Freespace planning: %f [s]", (end - start).seconds());
 
-  if (any_result) {
-    reversing_indices_ = utils::get_reversing_indices(trajectory_);
-    prev_target_index_ = 0;
-    target_index_ = utils::get_next_target_index(
-      trajectory_.points.size(), reversing_indices_, prev_target_index_);
-  } else {
+  if (!any_result) {
     RCLCPP_INFO(get_logger(), "Can't find goal: %s", error_msg.c_str());
     reset();
   }
@@ -553,11 +502,7 @@ void FreespacePlannerNode::planTrajectories()
 void FreespacePlannerNode::reset()
 {
   trajectory_ = Trajectory();
-  partial_trajectory_ = Trajectory(); // TODO remove any partial trajectory?
   candidate_trajectories_ = CandidateTrajectories();
-  reversing_indices_ = {};
-  prev_target_index_ = 0;
-  target_index_ = 0;
   is_completed_ = false;
   std_msgs::msg::Bool is_completed_msg;
   is_completed_msg.data = is_completed_;

@@ -123,7 +123,6 @@ private:
   // ros
   rclcpp::Publisher<Trajectory>::SharedPtr trajectory_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_pose_array_pub_;
-  rclcpp::Publisher<PoseArray>::SharedPtr debug_partial_pose_array_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr parking_state_pub_;
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
     processing_time_pub_;
@@ -158,13 +157,8 @@ private:
   std::vector<float> goal_distances_along_path_ {15.0, 20.0, 25.0, 30.0, 35.0}; // TODO read in as param
 
   Trajectory trajectory_;
-  Trajectory partial_trajectory_;
-  std::vector<size_t> reversing_indices_;
-  size_t prev_target_index_ = 0;
-  size_t target_index_ = 0;
   bool is_completed_ = false;
   // bool reset_in_progress_ = false;
-  bool is_new_parking_cycle_ = true;
   bool replan_requested_ = false;
   boost::optional<rclcpp::Time> obs_found_time_;
 
@@ -200,27 +194,6 @@ private:
    */
   bool isPlanRequired();
 
-  /**
-   * @brief Sets the target index along the current trajectory points
-   * @details if Ego is stopped AND is near the current target index along the trajectory,
-   *          then will get the next target index along the trajectory.
-   *          If the new target index is the same as the current target index, then
-   *          is_complete_ is set to true, and will publish is_completed_msg.
-   *          Otherwise will update prev_target_index_ and target_index_, to continue
-   *          following the trajectory.
-   */
-  void updateTargetIndex();
-
-  /**
-   * @brief Checks if current trajectory is colliding with an object.
-   * @details Will check if an obstacle exists along the current trajectory,
-   *          if there is no obstacle along the current trajectory, will reset obs_found_time_.
-   *          If an obstacle exists and the variable obs_found_time_ is not initialized,
-   *          will initialize with the current time.
-   * @return true if there is an obstacle along current trajectory, AND duration since
-   *         obs_found_time_ exceeds the parameter th_obstacle_time_sec
-   */
-  bool checkCurrentTrajectoryCollision();
 
   TransformStamped getTransform(const std::string & from, const std::string & to);
 
