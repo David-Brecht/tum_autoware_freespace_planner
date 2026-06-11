@@ -3,14 +3,16 @@
 Freespace planner trajectory selector GUI.
 
   - Subscribes to CandidateTrajectories and shows one button per candidate.
-  - Clicking a button publishes Int32(index) to the desired_trajectory_index topic.
+  - Clicking a button then "Publish Selection" sends Int32(index) to the planner.
 
-Topic defaults (resolved under /external/remote/freespace_planner/):
-  candidates : ~/output/candidate_trajectories
-  selection  : ~/input/desired_trajectory_index
-  state      : ~/output/current_state
+Topic / service defaults (resolved under /external/remote/freespace_planner/):
+  candidates       : ~/output/candidate_trajectories
+  selection        : ~/input/desired_trajectory_index
+  planner state    : ~/output/current_state
+  autoware state   : /api/motion/state
 """
 
+import signal
 import threading
 import tkinter as tk
 from tkinter import font as tkfont
@@ -18,16 +20,29 @@ from tkinter import font as tkfont
 import rclpy
 from rclpy.node import Node
 from autoware_internal_planning_msgs.msg import CandidateTrajectories
-from autoware_adapi_v1_msgs.srv import MuxSelectInput
+from autoware_adapi_v1_msgs.msg import MotionState, TeleoperationState
+from autoware_adapi_v1_msgs.srv import ChangeOperationMode, MuxSelectInput
 from std_msgs.msg import Int32, String
 from std_srvs.srv import Trigger
 
 
-CANDIDATES_TOPIC = "/external/remote/freespace_planner/output/candidate_trajectories"
-SELECTION_TOPIC  = "/external/remote/freespace_planner/input/desired_trajectory_index"
-TRIGGER_SERVICE  = "/external/remote/freespace_planner/trigger_replan"
-STATE_TOPIC      = "/external/remote/freespace_planner/output/current_state"
-MUX_SERVICE      = "/planning/trajectory_multiplexer/select_input"
+CANDIDATES_TOPIC  = "/external/remote/freespace_planner/output/candidate_trajectories"
+SELECTION_TOPIC   = "/external/remote/freespace_planner/input/desired_trajectory_index"
+TRIGGER_SERVICE   = "/external/remote/freespace_planner/trigger_replan"
+STATE_TOPIC       = "/external/remote/freespace_planner/output/current_state"
+MOTION_STATE_TOPIC        = "/api/motion/state"
+TELEOPERATION_STATE_TOPIC = "/external/remote/teleoperation_state"
+MUX_SERVICE               = "/planning/trajectory_multiplexer/select_input"
+CHANGE_TO_STOP_SERVICE    = "/api/operation_mode/change_to_stop"
+CHANGE_TO_REMOTE_SERVICE  = "/api/operation_mode/change_to_remote"
+CHANGE_TO_AUTO_SERVICE    = "/api/operation_mode/change_to_autonomous"
+
+_MOTION_STATES = {
+    MotionState.UNKNOWN:  "UNKNOWN",
+    MotionState.STOPPED:  "STOPPED",
+    MotionState.STARTING: "STARTING",
+    MotionState.MOVING:   "MOVING",
+}
 
 COLOR_DEFAULT    = "#e8e8e8"
 COLOR_LOCKED     = "#4caf50"
@@ -40,6 +55,8 @@ COLOR_PLAN_BTN   = "#1565c0"
 COLOR_PLAN_PEND  = "#ffb300"
 COLOR_PLAN_OK    = "#2e7d32"
 COLOR_PLAN_FAIL  = "#b71c1c"
+COLOR_REMOTE_BTN = "#e65100"
+COLOR_AUTO_BTN   = "#00695c"
 
 
 class TrajectorySelectorNode(Node):
@@ -50,24 +67,51 @@ class TrajectorySelectorNode(Node):
         self._sub = self.create_subscription(
             CandidateTrajectories, CANDIDATES_TOPIC, self._on_candidates, 10)
         self._pub = self.create_publisher(Int32, SELECTION_TOPIC, 10)
-        self._cli = self.create_client(Trigger, TRIGGER_SERVICE)
-        self._mux_cli = self.create_client(MuxSelectInput, MUX_SERVICE)
         self._state_sub = self.create_subscription(
             String, STATE_TOPIC, self._on_state, 10)
+        self._motion_sub = self.create_subscription(
+            MotionState, MOTION_STATE_TOPIC, self._on_motion_state, 10)
+
+        self._teleop_pub = self.create_publisher(TeleoperationState, TELEOPERATION_STATE_TOPIC, 1)
+        self.create_timer(1.0, self._publish_teleop_state)
+
+        self._replan_cli = self.create_client(Trigger, TRIGGER_SERVICE)
+        self._mux_cli = self.create_client(MuxSelectInput, MUX_SERVICE)
+        self._change_to_stop_cli = self.create_client(ChangeOperationMode, CHANGE_TO_STOP_SERVICE)
+        self._change_to_remote_cli = self.create_client(ChangeOperationMode, CHANGE_TO_REMOTE_SERVICE)
+        self._change_to_auto_cli = self.create_client(ChangeOperationMode, CHANGE_TO_AUTO_SERVICE)
 
         self.get_logger().info(
             f"Subscribing  : {CANDIDATES_TOPIC}\n"
             f"             : {STATE_TOPIC}\n"
+            f"             : {MOTION_STATE_TOPIC}\n"
             f"Publishing to: {SELECTION_TOPIC}\n"
-            f"Service      : {TRIGGER_SERVICE}\n"
-            f"             : {MUX_SERVICE}"
+            f"Services     : {TRIGGER_SERVICE}\n"
+            f"             : {MUX_SERVICE}\n"
+            f"             : {CHANGE_TO_STOP_SERVICE}\n"
+            f"             : {CHANGE_TO_REMOTE_SERVICE}\n"
+            f"             : {CHANGE_TO_AUTO_SERVICE}"
         )
+
+    def _publish_teleop_state(self):
+        msg = TeleoperationState()
+        msg.state = 2
+        msg.mode = 3
+        self._teleop_pub.publish(msg)
+
+    # ── Subscription callbacks ─────────────────────────────────────────────
 
     def _on_candidates(self, msg: CandidateTrajectories):
         self._gui.update_candidates(len(msg.candidate_trajectories))
 
     def _on_state(self, msg: String):
-        self._gui.update_state(msg.data)
+        self._gui.update_planner_state(msg.data)
+
+    def _on_motion_state(self, msg: MotionState):
+        self._gui.update_autoware_state(
+            _MOTION_STATES.get(msg.state, f"UNKNOWN({msg.state})"))
+
+    # ── Service calls ──────────────────────────────────────────────────────
 
     def publish_selection(self, index: int):
         msg = Int32()
@@ -76,37 +120,77 @@ class TrajectorySelectorNode(Node):
         self.get_logger().info(f"Published desired_trajectory_index: {index}")
 
     def trigger_replan(self, done_cb):
-        if not self._cli.service_is_ready():
+        if not self._replan_cli.service_is_ready():
             self.get_logger().warn("trigger_replan service not available")
             done_cb(False, "Service not available")
             return
-        future = self._cli.call_async(Trigger.Request())
-        future.add_done_callback(lambda f: self._on_trigger_response(f, done_cb))
+        future = self._replan_cli.call_async(Trigger.Request())
+        future.add_done_callback(lambda f: self._on_replan_resp(f, done_cb))
 
-    def _on_trigger_response(self, future, done_cb):
+    def _on_replan_resp(self, future, done_cb):
         try:
-            result = future.result()
-            self.get_logger().info(f"trigger_replan: {result.message}")
-            done_cb(result.success, result.message)
+            r = future.result()
+            done_cb(r.success, r.message)
         except Exception as e:
             self.get_logger().error(f"trigger_replan failed: {e}")
             done_cb(False, str(e))
 
-    def select_mux_input(self, mode: str, done_cb):
+    def set_remote_mode(self, done_cb):
+        self._set_mode(self._change_to_remote_cli, "REMOTE", done_cb)
+
+    def set_auto_mode(self, done_cb):
+        def _after_stop(ok):
+            if not ok:
+                done_cb(False)
+                return
+            self._set_mode(self._change_to_auto_cli, "AUTO", done_cb)
+
+        if not self._change_to_stop_cli.service_is_ready():
+            self.get_logger().warn("change_to_stop service not available")
+            done_cb(False)
+            return
+        future = self._change_to_stop_cli.call_async(ChangeOperationMode.Request())
+        future.add_done_callback(lambda f: self._on_change_op_resp(f, _after_stop))
+
+    def _set_mode(self, op_cli, mux_input: str, done_cb):
+        def _after_op_mode(ok1):
+            if not ok1:
+                self.get_logger().warn("operation mode change returned failure, proceeding with mux")
+            def _after_mux(ok2):
+                done_cb(ok2)
+            self._select_mux(mux_input, _after_mux)
+
+        if not op_cli.service_is_ready():
+            self.get_logger().warn(f"operation mode service not available")
+            done_cb(False)
+            return
+        future = op_cli.call_async(ChangeOperationMode.Request())
+        future.add_done_callback(lambda f: self._on_change_op_resp(f, _after_op_mode))
+
+    def _on_change_op_resp(self, future, done_cb):
+        try:
+            r = future.result()
+            self.get_logger().info(f"change_operation_mode: success={r.status.success}")
+            done_cb(r.status.success)
+        except Exception as e:
+            self.get_logger().error(f"change_operation_mode failed: {e}")
+            done_cb(False)
+
+    def _select_mux(self, mode: str, done_cb):
         if not self._mux_cli.service_is_ready():
-            self.get_logger().warn(f"mux service not available")
+            self.get_logger().warn("mux service not available")
             done_cb(False)
             return
         req = MuxSelectInput.Request()
         req.select_input = mode
         future = self._mux_cli.call_async(req)
-        future.add_done_callback(lambda f: self._on_mux_response(f, done_cb))
+        future.add_done_callback(lambda f: self._on_mux_resp(f, done_cb))
 
-    def _on_mux_response(self, future, done_cb):
+    def _on_mux_resp(self, future, done_cb):
         try:
-            result = future.result()
-            self.get_logger().info(f"mux select: success={result.success}")
-            done_cb(result.success)
+            r = future.result()
+            self.get_logger().info(f"mux select: success={r.success}")
+            done_cb(r.success)
         except Exception as e:
             self.get_logger().error(f"mux select failed: {e}")
             done_cb(False)
@@ -130,23 +214,59 @@ class TrajectorySelectorGUI:
     # ── UI construction ────────────────────────────────────────────────────
 
     def _build_ui(self):
-        small_font      = tkfont.Font(family="Helvetica", size=10)
-        state_val_font  = tkfont.Font(family="Helvetica", size=10, weight="bold")
-        plan_font       = tkfont.Font(family="Helvetica", size=12, weight="bold")
+        small_font     = tkfont.Font(family="Helvetica", size=10)
+        state_val_font = tkfont.Font(family="Helvetica", size=10, weight="bold")
+        plan_font      = tkfont.Font(family="Helvetica", size=12, weight="bold")
 
-        # State row
-        state_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=8)
+        # Fix window width to the rendered width of the longest planner-state string.
+        _fixed_w = (12 + small_font.measure("Planner state:") + 6
+                    + state_val_font.measure("AWAITING_TRAJECTORY_SELECTION") + 12)
+        self._root.minsize(_fixed_w, 0)
+        self._root.maxsize(_fixed_w, 9999)
+
+        # Button wraplength: window width minus frame padx (12 each side) and button padx
+        _wrap = _fixed_w - 24 - 20
+
+        # ── State rows ──────────────────────────────────────────────────────
+
+        state_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=6)
         state_frame.pack(fill=tk.X)
-        tk.Label(state_frame, text="State:", font=small_font,
-                 bg=COLOR_BG, fg="#78909c").pack(side=tk.LEFT)
-        self._state_var = tk.StringVar(value="—")
-        tk.Label(state_frame, textvariable=self._state_var,
-                 font=state_val_font,
-                 bg=COLOR_BG, fg=COLOR_TEXT_LIGHT).pack(side=tk.LEFT, padx=(6, 0))
+
+        tk.Label(state_frame, text="Planner state:", font=small_font,
+                 bg=COLOR_BG, fg="#78909c").grid(row=0, column=0, sticky=tk.W)
+        self._planner_state_var = tk.StringVar(value="—")
+        tk.Label(state_frame, textvariable=self._planner_state_var, font=state_val_font,
+                 bg=COLOR_BG, fg=COLOR_TEXT_LIGHT).grid(row=0, column=1, sticky=tk.W, padx=(6, 0))
+
+        tk.Label(state_frame, text="Autoware state:", font=small_font,
+                 bg=COLOR_BG, fg="#78909c").grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
+        self._autoware_state_var = tk.StringVar(value="—")
+        tk.Label(state_frame, textvariable=self._autoware_state_var, font=state_val_font,
+                 bg=COLOR_BG, fg=COLOR_TEXT_LIGHT).grid(row=1, column=1, sticky=tk.W,
+                                                         padx=(6, 0), pady=(3, 0))
 
         tk.Frame(self._root, bg="#546e7a", height=1).pack(fill=tk.X, padx=12)
 
-        # Planning request button
+        # ── Set to Remote ────────────────────────────────────────────────────
+
+        remote_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
+        remote_frame.pack(fill=tk.X)
+        self._remote_btn = tk.Button(
+            remote_frame,
+            text="Set Autoware and Trajectory Multiplexer to Remote",
+            font=plan_font,
+            wraplength=_wrap,
+            bg=COLOR_REMOTE_BTN, fg="white",
+            activebackground="#bf360c", activeforeground="white",
+            relief=tk.FLAT, padx=10, pady=8,
+            command=self._on_set_remote,
+        )
+        self._remote_btn.pack(fill=tk.X)
+
+        tk.Frame(self._root, bg="#546e7a", height=1).pack(fill=tk.X, padx=12)
+
+        # ── Planning request ─────────────────────────────────────────────────
+
         plan_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
         plan_frame.pack(fill=tk.X)
         self._plan_btn = tk.Button(
@@ -162,7 +282,8 @@ class TrajectorySelectorGUI:
 
         tk.Frame(self._root, bg="#546e7a", height=1).pack(fill=tk.X, padx=12)
 
-        # Candidate buttons frame
+        # ── Candidate buttons ────────────────────────────────────────────────
+
         self._btn_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=8)
         self._btn_frame.pack(fill=tk.BOTH, expand=True)
         tk.Label(self._btn_frame,
@@ -171,7 +292,8 @@ class TrajectorySelectorGUI:
 
         tk.Frame(self._root, bg="#546e7a", height=1).pack(fill=tk.X, padx=12)
 
-        # Publish selection button
+        # ── Publish selection ────────────────────────────────────────────────
+
         pub_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
         pub_frame.pack(fill=tk.X)
         self._publish_btn = tk.Button(
@@ -189,48 +311,31 @@ class TrajectorySelectorGUI:
 
         tk.Frame(self._root, bg="#546e7a", height=1).pack(fill=tk.X, padx=12)
 
-        # Mux select buttons
-        mux_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
-        mux_frame.pack(fill=tk.X)
-        mux_font = tkfont.Font(family="Helvetica", size=11, weight="bold")
+        # ── Set to Auto ──────────────────────────────────────────────────────
 
-        self._remote_btn = tk.Button(
-            mux_frame,
-            text="Set Remote",
-            font=mux_font,
-            bg="#e65100", fg="white",
-            activebackground="#bf360c", activeforeground="white",
-            disabledforeground="#78909c",
-            relief=tk.FLAT, padx=8, pady=7,
-            command=lambda: self._on_mux_select("REMOTE", self._remote_btn, "#e65100", "Set Remote"),
-        )
-        self._remote_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-
+        auto_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
+        auto_frame.pack(fill=tk.X)
         self._auto_btn = tk.Button(
-            mux_frame,
-            text="Set Auto",
-            font=mux_font,
-            bg="#00695c", fg="white",
+            auto_frame,
+            text="Set Autoware and Trajectory Multiplexer to Auto",
+            font=plan_font,
+            wraplength=_wrap,
+            bg=COLOR_AUTO_BTN, fg="white",
             activebackground="#004d40", activeforeground="white",
-            disabledforeground="#78909c",
-            relief=tk.FLAT, padx=8, pady=7,
-            command=lambda: self._on_mux_select("AUTO", self._auto_btn, "#00695c", "Set Auto"),
+            relief=tk.FLAT, padx=10, pady=8,
+            command=self._on_set_auto,
         )
-        self._auto_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
-
-        # Fix window to the width required by the longest state string.
-        # state_frame has padx=12 on each side; the value label has padx=(6,0).
-        _fixed_w = (12 + small_font.measure("State:") + 6
-                    + state_val_font.measure("AWAITING_TRAJECTORY_SELECTION") + 12)
-        self._root.minsize(_fixed_w, 0)
-        self._root.maxsize(_fixed_w, 9999)
+        self._auto_btn.pack(fill=tk.X)
 
         self._root.after(100, self._poll_ros)
 
-    # ── Candidate / state updates ──────────────────────────────────────────
+    # ── State / candidate updates ──────────────────────────────────────────
 
-    def update_state(self, state: str):
-        self._root.after(0, lambda: self._state_var.set(state))
+    def update_planner_state(self, state: str):
+        self._root.after(0, lambda: self._planner_state_var.set(state))
+
+    def update_autoware_state(self, state: str):
+        self._root.after(0, lambda: self._autoware_state_var.set(state))
 
     def update_candidates(self, count: int):
         with self._lock:
@@ -293,11 +398,11 @@ class TrajectorySelectorGUI:
     def _on_trigger_replan(self):
         self._plan_btn.configure(text="⟳  Sending...", bg=COLOR_PLAN_PEND, state=tk.DISABLED)
         if self._node:
-            self._node.trigger_replan(self._on_trigger_done)
+            self._node.trigger_replan(self._on_replan_done)
         else:
             self._root.after(1500, self._reset_plan_btn)
 
-    def _on_trigger_done(self, success: bool, message: str):
+    def _on_replan_done(self, success: bool, *_):
         color = COLOR_PLAN_OK if success else COLOR_PLAN_FAIL
         text  = "✔  Request Sent" if success else "✗  Failed"
         self._root.after(0, lambda: self._plan_btn.configure(
@@ -324,17 +429,34 @@ class TrajectorySelectorGUI:
             self._locked_idx = -1
         self._update_button_styles()
 
-    def _on_mux_select(self, mode: str, btn: tk.Button, orig_bg: str, orig_text: str):
-        btn.configure(text="⟳  ...", bg=COLOR_PLAN_PEND, state=tk.DISABLED)
+    def _on_set_remote(self):
+        self._start_mode_btn(self._remote_btn)
         if self._node:
-            self._node.select_mux_input(
-                mode,
-                lambda ok: self._root.after(0, lambda: self._finish_mux(btn, ok, orig_bg, orig_text)),
-            )
+            self._node.set_remote_mode(
+                lambda ok: self._root.after(0, lambda: self._finish_mode_btn(
+                    self._remote_btn, ok, COLOR_REMOTE_BTN,
+                    "Set Autoware and Trajectory Multiplexer to Remote")))
         else:
-            self._root.after(1500, lambda: self._finish_mux(btn, False, orig_bg, orig_text))
+            self._root.after(1500, lambda: self._finish_mode_btn(
+                self._remote_btn, False, COLOR_REMOTE_BTN,
+                "Set Autoware and Trajectory Multiplexer to Remote"))
 
-    def _finish_mux(self, btn: tk.Button, success: bool, orig_bg: str, orig_text: str):
+    def _on_set_auto(self):
+        self._start_mode_btn(self._auto_btn)
+        if self._node:
+            self._node.set_auto_mode(
+                lambda ok: self._root.after(0, lambda: self._finish_mode_btn(
+                    self._auto_btn, ok, COLOR_AUTO_BTN,
+                    "Set Autoware and Trajectory Multiplexer to Auto")))
+        else:
+            self._root.after(1500, lambda: self._finish_mode_btn(
+                self._auto_btn, False, COLOR_AUTO_BTN,
+                "Set Autoware and Trajectory Multiplexer to Auto"))
+
+    def _start_mode_btn(self, btn: tk.Button):
+        btn.configure(text="⟳  ...", bg=COLOR_PLAN_PEND, state=tk.DISABLED)
+
+    def _finish_mode_btn(self, btn: tk.Button, success: bool, orig_bg: str, orig_text: str):
         btn.configure(
             text="✔" if success else "✗",
             bg=COLOR_PLAN_OK if success else COLOR_PLAN_FAIL,
@@ -352,6 +474,7 @@ class TrajectorySelectorGUI:
     def run(self):
         rclpy.init()
         self._node = TrajectorySelectorNode(self)
+        signal.signal(signal.SIGINT, lambda *_: self._root.after(0, self._root.quit))
         try:
             self._root.mainloop()
         finally:

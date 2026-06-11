@@ -39,6 +39,7 @@
 #include <autoware_utils/geometry/pose_deviation.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
 #include <rclcpp/logging.hpp>
+#include <rclcpp/qos.hpp>
 
 #include <algorithm>
 #include <deque>
@@ -113,6 +114,7 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
   path_sub_ = create_subscription<Path>(
     "~/input/path", rclcpp::QoS{1}.durability_volatile(),
     std::bind(&FreespacePlannerNode::onPath, this, _1));
+
   trajectory_identifier_sub_ = create_subscription<std_msgs::msg::Int32>(
     "~/input/desired_trajectory_index", rclcpp::QoS{1}.durability_volatile(),
     [this](const std_msgs::msg::Int32 & msg) {
@@ -123,6 +125,14 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
       desired_trajectory_index_ = static_cast<size_t>(msg.data);
     }
   );
+
+  operation_mode_state_sub_ = create_subscription<OperationModeState>("/api/operation_mode/state", 
+    rclcpp::QoS{rclcpp::KeepLast{1}}.reliable().transient_local(), 
+    [this] (const OperationModeState & msg) {
+      operation_mode_ = msg.mode;
+    }
+  );  
+
 
   // Publishers
   {
@@ -182,9 +192,9 @@ PlannerCommonParam FreespacePlannerNode::getPlannerCommonParam()
 
 bool FreespacePlannerNode::isPlanRequired()
 {
-  // if (replan_requested_) {
+  // if (planning_requested_) {
   //   RCLCPP_INFO(get_logger(), "User requested planning.");
-  //   replan_requested_ = false;
+  //   planning_requested_ = false;
   //   return true;
   // }
 
@@ -290,7 +300,7 @@ void FreespacePlannerNode::onTriggerReplan(
 {
   (void)request;
 
-  replan_requested_ = true;
+  planning_requested_ = true;
 
   response->success = true;
   response->message = "Replanning requested.";
@@ -347,11 +357,20 @@ bool FreespacePlannerNode::isDataReady()
 void FreespacePlannerNode::handleIdle() 
 {
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock());
-  if (replan_requested_) {
-    RCLCPP_INFO(get_logger(), "User requested planning.");
-    replan_requested_ = false;
-    setState(State::PLANNING);
-  }     
+
+  if (!planning_requested_) {
+    return;
+  }
+
+  planning_requested_ = false;
+
+  if (operation_mode_ != OperationModeState::REMOTE) {
+    RCLCPP_INFO(this->get_logger(), "Not yet in Remote Mode. Planning cannot be activated. Set autoware to Remote Mode and send planning request again.");
+    return;
+  }
+
+  RCLCPP_INFO(get_logger(), "User requested planning.");
+  setState(State::PLANNING);
 }
 
 void FreespacePlannerNode::handlePlanning() 
@@ -373,27 +392,31 @@ void FreespacePlannerNode::handlePlanning()
       "Waiting for the vehicle to stop before generating a new trajectory.");
   }
 
-  // TODO user may also do the automation handover directly here
+  // TODO user may also do the automation handover here if the automation trajectory now suits their liking
 }
 
 void FreespacePlannerNode::handleAwaitingTrajectorySelection() 
 {
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
   
-  // If we receive a planning request, jump back to the planning 
-  if (replan_requested_) {
+  // If a planning request is received here (e.g. the user likes none of the trajectories and the
+  // environment has changed since last initiation), allow going back to the planning step
+  if (planning_requested_) {
     RCLCPP_INFO(get_logger(), "User requested planning.");
-    replan_requested_ = false;
+    planning_requested_ = false;
     setState(State::PLANNING);
     return;
   }
 
-  // Handle selection of desired trajectory from the candidate trajectories 
   // TODO - we likely need here a logic that compares timestamps of desired trajectory message and 
   // trajectories to get a indication of where to set the goal point
-  if (!desired_trajectory_index_.has_value() || 
-    desired_trajectory_index_ >= candidate_trajectories_.candidate_trajectories.size()) {
-    RCLCPP_WARN(this->get_logger(), "Desired trajectory index either unset or too large.");
+  if (!desired_trajectory_index_.has_value()) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 5000, "Publish desired trajectory index to on ~/input/desired_trajectory_index.");
+    return;
+  }
+
+  if (desired_trajectory_index_ >= candidate_trajectories_.candidate_trajectories.size()) {
+    RCLCPP_INFO(this->get_logger(), "Desired trajectory index too large.");
     return;
   }
 
@@ -416,7 +439,7 @@ void FreespacePlannerNode::handleExecutingTrajectory()
     trajectory_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
 
   if (is_ego_stopped && is_near_goal) {
-    RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered")
+    RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered");
     setState(State::AWAITING_AUTOMATION_HANDOVER);
   }
 }
@@ -427,9 +450,9 @@ void FreespacePlannerNode::handleAwaitingAutomationHandover()
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
 
   // User may trigger replanning if vehicles position is not as desired
-  if (replan_requested_) {
+  if (planning_requested_) {
     RCLCPP_INFO(get_logger(), "User requested planning.");
-    replan_requested_ = false;
+    planning_requested_ = false;
     setState(State::PLANNING);
   }  
 

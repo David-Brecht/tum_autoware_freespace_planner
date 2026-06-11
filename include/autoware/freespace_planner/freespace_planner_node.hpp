@@ -41,6 +41,8 @@
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 #include <rclcpp/rclcpp.hpp>
 
+#include <autoware_adapi_v1_msgs/msg/detail/operation_mode_state__struct.hpp>
+#include <autoware_adapi_v1_msgs/msg/operation_mode_state.hpp>
 #include <autoware_internal_debug_msgs/msg/float64_stamped.hpp>
 #include <autoware_internal_planning_msgs/msg/candidate_trajectories.hpp>
 #include <autoware_internal_planning_msgs/msg/candidate_trajectory.hpp>
@@ -78,6 +80,7 @@ using autoware::freespace_planning_algorithms::PlannerCommonParam;
 using autoware::freespace_planning_algorithms::RRTStar;
 using autoware::freespace_planning_algorithms::RRTStarParam;
 using autoware::freespace_planning_algorithms::VehicleShape;
+using autoware_adapi_v1_msgs::msg::OperationModeState;
 using autoware_internal_planning_msgs::msg::CandidateTrajectories;
 using autoware_internal_planning_msgs::msg::CandidateTrajectory;
 using autoware_planning_msgs::msg::Path;
@@ -131,6 +134,7 @@ private:
 
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr trajectory_identifier_sub_;
   rclcpp::Subscription<Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<OperationModeState>::SharedPtr operation_mode_state_sub_;
   autoware_utils::InterProcessPollingSubscriber<OccupancyGrid> occupancy_grid_sub_{
     this, "~/input/occupancy_grid"};
   autoware_utils::InterProcessPollingSubscriber<Odometry, autoware_utils::polling_policy::All>
@@ -157,7 +161,7 @@ private:
   Trajectory trajectory_;
   bool is_completed_ = false;
   // bool reset_in_progress_ = false;
-  bool replan_requested_ = false;
+  bool planning_requested_ = false;
   bool obstacle_on_trajectory_;
   boost::optional<rclcpp::Time> obs_found_time_;
 
@@ -166,6 +170,7 @@ private:
   Odometry::ConstSharedPtr odom_;
   std_msgs::msg::String state_msg_;
   std::optional<size_t> desired_trajectory_index_;
+  uint8_t operation_mode_;
 
   std::deque<Odometry::ConstSharedPtr> odom_buffer_;
 
