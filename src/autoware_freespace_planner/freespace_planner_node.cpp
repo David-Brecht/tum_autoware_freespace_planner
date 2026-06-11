@@ -372,6 +372,8 @@ void FreespacePlannerNode::handlePlanning()
     RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 500,
       "Waiting for the vehicle to stop before generating a new trajectory.");
   }
+
+  // TODO user may also do the automation handover directly here
 }
 
 void FreespacePlannerNode::handleAwaitingTrajectorySelection() 
@@ -398,19 +400,46 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
   RCLCPP_INFO(this->get_logger(), "Populating trajectory with data from candidate trajectory.");
   trajectory_.header = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).header;
   trajectory_.points = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).points;
+  candidate_trajectories_ = CandidateTrajectories();
   setState(State::EXECUTING_TRAJECTORY);
 }
 
 void FreespacePlannerNode::handleExecutingTrajectory() 
 {
-  // Handle ... 
+  // TODO Handle... 
   // Emergency brake
-  // Replanning, including the goal point and also repeated selection
-  // Transition to handle awaiting automation handover when near the goal point and stopped or handle planning when desired by the RO
+  // Replanning, including the goal point and also repeated selection (maybe only if below a certain velocity threshold)
+  
+  const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
+  // TODO make based on the goal point itself? Think about the case where we may get to automation handover as soon as we are stopping along the trajectory
+  const bool is_near_goal = utils::is_near_target(
+    trajectory_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
+
+  if (is_ego_stopped && is_near_goal) {
+    RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered")
+    setState(State::AWAITING_AUTOMATION_HANDOVER);
+  }
 }
 
 void FreespacePlannerNode::handleAwaitingAutomationHandover() 
-{}
+{
+  // Keep the vehicle stopped in this state
+  trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
+
+  // User may trigger replanning if vehicles position is not as desired
+  if (replan_requested_) {
+    RCLCPP_INFO(get_logger(), "User requested planning.");
+    replan_requested_ = false;
+    setState(State::PLANNING);
+  }  
+
+  // Add a service call to 
+  // Set to auto state
+  // Set the multiplexer to auto trajectory
+  // 
+  // Give a final approval for handover?
+}
+
 void FreespacePlannerNode::handleAutomatedDriving() 
 {}
   
