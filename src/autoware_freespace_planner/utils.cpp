@@ -141,9 +141,19 @@ Trajectory create_stop_trajectory(
   waypoints.header.stamp = clock->now();
   waypoints.header.frame_id = current_pose.header.frame_id;
   waypoint.pose.header = waypoints.header;
-  waypoint.pose.pose = current_pose.pose;
   waypoint.is_back = false;
-  waypoints.waypoints.push_back(waypoint);
+
+  const auto & q = current_pose.pose.orientation;
+  // forward unit vector (local x-axis rotated into world frame)
+  const double fx = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+  const double fy = 2.0 * (q.x * q.y + q.w * q.z);
+
+  for (double d = 0.0; d <= 1.0 + 1e-9; d += 0.2) {
+    waypoint.pose.pose = current_pose.pose;
+    waypoint.pose.pose.position.x += d * fx;
+    waypoint.pose.pose.position.y += d * fy;
+    waypoints.waypoints.push_back(waypoint);
+  }
 
   return create_trajectory(current_pose, waypoints, 0.0);
 }

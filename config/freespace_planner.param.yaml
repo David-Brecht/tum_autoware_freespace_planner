@@ -15,7 +15,7 @@
 
     # -- Configurations common to the all planners --
     # base configs
-    time_limit: 300.0 # [ms]
+    time_limit: 500.0 # [ms]
     max_turning_ratio: 0.7 # ratio of actual turning limit of vehicle
     turning_steps: 1
     # search configs

@@ -65,10 +65,8 @@ const char * toString(const FreespacePlannerNode::State state) {
       return "AWAITING_TRAJECTORY_SELECTION";
     case FreespacePlannerNode::State::EXECUTING_TRAJECTORY:
       return "EXECUTING_TRAJECTORY";
-    case FreespacePlannerNode::State::AWAITING_AUTOMATION_HANDOVER:
-      return "AWAITING_AUTOMATION_HANDOVER";
-    case FreespacePlannerNode::State::AUTOMATED_DRIVING:
-      return "AUTOMATED_DRIVING";
+    case FreespacePlannerNode::State::EXECUTION_FINISHED:
+      return "EXECUTION_FINISHED";
   }
   return "UNKNOWN";
 }
@@ -410,10 +408,6 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
 
   // TODO - we likely need here a logic that compares timestamps of desired trajectory message and 
   // trajectories to get a indication of where to set the goal point
-  if (!desired_trajectory_index_.has_value()) {
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 5000, "Publish desired trajectory index to on ~/input/desired_trajectory_index.");
-    return;
-  }
 
   if (desired_trajectory_index_ >= candidate_trajectories_.candidate_trajectories.size()) {
     RCLCPP_INFO(this->get_logger(), "Desired trajectory index too large.");
@@ -423,7 +417,10 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
   RCLCPP_INFO(this->get_logger(), "Populating trajectory with data from candidate trajectory.");
   trajectory_.header = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).header;
   trajectory_.points = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).points;
+  desired_trajectory_index_.reset();
+  
   candidate_trajectories_ = CandidateTrajectories();
+
   setState(State::EXECUTING_TRAJECTORY);
 }
 
@@ -440,11 +437,11 @@ void FreespacePlannerNode::handleExecutingTrajectory()
 
   if (is_ego_stopped && is_near_goal) {
     RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered");
-    setState(State::AWAITING_AUTOMATION_HANDOVER);
+    setState(State::EXECUTION_FINISHED);
   }
 }
 
-void FreespacePlannerNode::handleAwaitingAutomationHandover() 
+void FreespacePlannerNode::handleExecutionFinished() 
 {
   // Keep the vehicle stopped in this state
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
@@ -456,16 +453,12 @@ void FreespacePlannerNode::handleAwaitingAutomationHandover()
     setState(State::PLANNING);
   }  
 
-  // Add a service call to 
-  // Set to auto state
-  // Set the multiplexer to auto trajectory
-  // 
-  // Give a final approval for handover?
+  // If autoware mode is changed to auto (teleoperation is not needed anymore), jump back to idle
+  // TODO - Give a final approval for handover?
+  if(operation_mode_ == OperationModeState::AUTONOMOUS) {
+    setState(State::IDLE);
+  }
 }
-
-void FreespacePlannerNode::handleAutomatedDriving() 
-{}
-  
 
 // =================================================================================================
 // === Timer with state management =================================================================
@@ -492,11 +485,8 @@ void FreespacePlannerNode::onTimer()
     case State::EXECUTING_TRAJECTORY:
       handleExecutingTrajectory();
       break;
-    case State::AWAITING_AUTOMATION_HANDOVER:
-      handleAwaitingAutomationHandover();
-      break;
-    case State::AUTOMATED_DRIVING:
-      handleAutomatedDriving();
+    case State::EXECUTION_FINISHED:
+      handleExecutionFinished();
       break;
     default:
       RCLCPP_INFO(this->get_logger(), "No state identified.\n");

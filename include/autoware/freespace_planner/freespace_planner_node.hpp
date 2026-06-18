@@ -120,8 +120,7 @@ public:
     PLANNING,
     AWAITING_TRAJECTORY_SELECTION,
     EXECUTING_TRAJECTORY,
-    AWAITING_AUTOMATION_HANDOVER,
-    AUTOMATED_DRIVING
+    EXECUTION_FINISHED
   };
 
 private:
@@ -222,8 +221,7 @@ private:
   void handlePlanning();
   void handleAwaitingTrajectorySelection();
   void handleExecutingTrajectory();
-  void handleAwaitingAutomationHandover();
-  void handleAutomatedDriving();
+  void handleExecutionFinished();
   
 
   friend class ::TestFreespacePlanner;

@@ -51,12 +51,12 @@ COLOR_HOVER      = "#bbdefb"
 COLOR_BG         = "#263238"
 COLOR_TEXT_LIGHT = "#eceff1"
 COLOR_TEXT_DARK  = "#212121"
+COLOR_SVC_BTN    = "#00796b"   # unified color for all service-call buttons
+COLOR_SVC_ACTIVE = "#004d40"
 COLOR_PLAN_BTN   = "#1565c0"
 COLOR_PLAN_PEND  = "#ffb300"
 COLOR_PLAN_OK    = "#2e7d32"
 COLOR_PLAN_FAIL  = "#b71c1c"
-COLOR_REMOTE_BTN = "#e65100"
-COLOR_AUTO_BTN   = "#00695c"
 
 
 class TrajectorySelectorNode(Node):
@@ -135,37 +135,28 @@ class TrajectorySelectorNode(Node):
             self.get_logger().error(f"trigger_replan failed: {e}")
             done_cb(False, str(e))
 
-    def set_remote_mode(self, done_cb):
-        self._set_mode(self._change_to_remote_cli, "REMOTE", done_cb)
+    def call_change_to_remote(self, done_cb):
+        self._call_op_mode(self._change_to_remote_cli, done_cb)
 
-    def set_auto_mode(self, done_cb):
-        def _after_stop(ok):
-            if not ok:
-                done_cb(False)
-                return
-            self._set_mode(self._change_to_auto_cli, "AUTO", done_cb)
+    def call_change_to_stop(self, done_cb):
+        self._call_op_mode(self._change_to_stop_cli, done_cb)
 
-        if not self._change_to_stop_cli.service_is_ready():
-            self.get_logger().warn("change_to_stop service not available")
+    def call_change_to_auto(self, done_cb):
+        self._call_op_mode(self._change_to_auto_cli, done_cb)
+
+    def call_mux_remote(self, done_cb):
+        self._select_mux("REMOTE", done_cb)
+
+    def call_mux_auto(self, done_cb):
+        self._select_mux("AUTO", done_cb)
+
+    def _call_op_mode(self, cli, done_cb):
+        if not cli.service_is_ready():
+            self.get_logger().warn("operation mode service not available")
             done_cb(False)
             return
-        future = self._change_to_stop_cli.call_async(ChangeOperationMode.Request())
-        future.add_done_callback(lambda f: self._on_change_op_resp(f, _after_stop))
-
-    def _set_mode(self, op_cli, mux_input: str, done_cb):
-        def _after_op_mode(ok1):
-            if not ok1:
-                self.get_logger().warn("operation mode change returned failure, proceeding with mux")
-            def _after_mux(ok2):
-                done_cb(ok2)
-            self._select_mux(mux_input, _after_mux)
-
-        if not op_cli.service_is_ready():
-            self.get_logger().warn(f"operation mode service not available")
-            done_cb(False)
-            return
-        future = op_cli.call_async(ChangeOperationMode.Request())
-        future.add_done_callback(lambda f: self._on_change_op_resp(f, _after_op_mode))
+        future = cli.call_async(ChangeOperationMode.Request())
+        future.add_done_callback(lambda f: self._on_change_op_resp(f, done_cb))
 
     def _on_change_op_resp(self, future, done_cb):
         try:
@@ -251,17 +242,12 @@ class TrajectorySelectorGUI:
 
         remote_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
         remote_frame.pack(fill=tk.X)
-        self._remote_btn = tk.Button(
-            remote_frame,
-            text="Set Autoware and Trajectory Multiplexer to Remote",
-            font=plan_font,
-            wraplength=_wrap,
-            bg=COLOR_REMOTE_BTN, fg="white",
-            activebackground="#bf360c", activeforeground="white",
-            relief=tk.FLAT, padx=10, pady=8,
-            command=self._on_set_remote,
-        )
-        self._remote_btn.pack(fill=tk.X)
+        self._action_btn(remote_frame, "Set Autoware to Remote",
+                         lambda cb: self._node.call_change_to_remote(cb),
+                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        self._action_btn(remote_frame, "Set Trajectory Multiplexer to Remote",
+                         lambda cb: self._node.call_mux_remote(cb),
+                         plan_font, _wrap).pack(fill=tk.X)
 
         tk.Frame(self._root, bg="#546e7a", height=1).pack(fill=tk.X, padx=12)
 
@@ -315,17 +301,15 @@ class TrajectorySelectorGUI:
 
         auto_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
         auto_frame.pack(fill=tk.X)
-        self._auto_btn = tk.Button(
-            auto_frame,
-            text="Set Autoware and Trajectory Multiplexer to Auto",
-            font=plan_font,
-            wraplength=_wrap,
-            bg=COLOR_AUTO_BTN, fg="white",
-            activebackground="#004d40", activeforeground="white",
-            relief=tk.FLAT, padx=10, pady=8,
-            command=self._on_set_auto,
-        )
-        self._auto_btn.pack(fill=tk.X)
+        self._action_btn(auto_frame, "Set Autoware to Stop",
+                         lambda cb: self._node.call_change_to_stop(cb),
+                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        self._action_btn(auto_frame, "Set Autoware to Auto",
+                         lambda cb: self._node.call_change_to_auto(cb),
+                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        self._action_btn(auto_frame, "Set Trajectory Multiplexer to Auto",
+                         lambda cb: self._node.call_mux_auto(cb),
+                         plan_font, _wrap).pack(fill=tk.X)
 
         self._root.after(100, self._poll_ros)
 
@@ -429,29 +413,19 @@ class TrajectorySelectorGUI:
             self._locked_idx = -1
         self._update_button_styles()
 
-    def _on_set_remote(self):
-        self._start_mode_btn(self._remote_btn)
-        if self._node:
-            self._node.set_remote_mode(
-                lambda ok: self._root.after(0, lambda: self._finish_mode_btn(
-                    self._remote_btn, ok, COLOR_REMOTE_BTN,
-                    "Set Autoware and Trajectory Multiplexer to Remote")))
-        else:
-            self._root.after(1500, lambda: self._finish_mode_btn(
-                self._remote_btn, False, COLOR_REMOTE_BTN,
-                "Set Autoware and Trajectory Multiplexer to Remote"))
-
-    def _on_set_auto(self):
-        self._start_mode_btn(self._auto_btn)
-        if self._node:
-            self._node.set_auto_mode(
-                lambda ok: self._root.after(0, lambda: self._finish_mode_btn(
-                    self._auto_btn, ok, COLOR_AUTO_BTN,
-                    "Set Autoware and Trajectory Multiplexer to Auto")))
-        else:
-            self._root.after(1500, lambda: self._finish_mode_btn(
-                self._auto_btn, False, COLOR_AUTO_BTN,
-                "Set Autoware and Trajectory Multiplexer to Auto"))
+    def _action_btn(self, parent, text: str, node_fn, plan_font, wrap: int) -> tk.Button:
+        btn = tk.Button(parent, text=text, font=plan_font, wraplength=wrap,
+                        bg=COLOR_SVC_BTN, fg="white",
+                        activebackground=COLOR_SVC_ACTIVE, activeforeground="white",
+                        relief=tk.FLAT, padx=10, pady=8)
+        def _cmd():
+            self._start_mode_btn(btn)
+            if self._node:
+                node_fn(lambda ok: self._root.after(0, lambda: self._finish_mode_btn(btn, ok, COLOR_SVC_BTN, text)))
+            else:
+                self._root.after(1500, lambda: self._finish_mode_btn(btn, False, COLOR_SVC_BTN, text))
+        btn.configure(command=_cmd)
+        return btn
 
     def _start_mode_btn(self, btn: tk.Button):
         btn.configure(text="⟳  ...", bg=COLOR_PLAN_PEND, state=tk.DISABLED)
