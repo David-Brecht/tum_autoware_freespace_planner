@@ -187,4 +187,28 @@ bool is_near_target(const Pose & target_pose, const Pose & current_pose, const d
   return abs(pose_dev.yaw) < M_PI_2 && abs(pose_dev.longitudinal) < th_distance_m &&
          abs(pose_dev.lateral) < th_distance_m;
 }
+
+Path convert_to_path(const Trajectory & trajectory) {
+  Path path;
+  path.header = trajectory.header;
+  if (trajectory.points.empty()) {
+    return path;
+  }
+  path.points.reserve(trajectory.points.size());
+  for (const auto & trajectory_point : trajectory.points) {
+    auto & path_point = path.points.emplace_back();
+    path_point.pose = trajectory_point.pose;
+    path_point.longitudinal_velocity_mps = trajectory_point.longitudinal_velocity_mps;
+	  path_point.lateral_velocity_mps = trajectory_point.lateral_velocity_mps;
+	  path_point.heading_rate_rps = trajectory_point.heading_rate_rps;
+	  path_point.is_final = false;
+  }
+  path.points.back().is_final = true;
+  
+  // Dummy values since downstream elastic band smoother has this as validity check  
+  path.left_bound.push_back(trajectory.points.at(0).pose.position);
+  path.right_bound.push_back(trajectory.points.at(0).pose.position);
+  return path;
+}
+
 }  // namespace autoware::freespace_planner::utils

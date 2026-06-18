@@ -19,6 +19,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <autoware_planning_msgs/msg/path.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <autoware_planning_msgs/msg/trajectory_point.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
@@ -33,6 +34,8 @@ namespace autoware::freespace_planner::utils
 {
 using autoware::freespace_planning_algorithms::PlannerWaypoint;
 using autoware::freespace_planning_algorithms::PlannerWaypoints;
+using autoware_planning_msgs::msg::Path;
+using autoware_planning_msgs::msg::PathPoint;
 using autoware_planning_msgs::msg::Trajectory;
 using autoware_planning_msgs::msg::TrajectoryPoint;
 using geometry_msgs::msg::Pose;
@@ -71,6 +74,8 @@ bool is_stopped(
 
 bool is_near_target(
   const Pose & target_pose, const Pose & current_pose, const double th_distance_m);
+
+Path convert_to_path(const Trajectory & trajectory);
 }  // namespace autoware::freespace_planner::utils
 
 #endif  // AUTOWARE__FREESPACE_PLANNER__UTILS_HPP_

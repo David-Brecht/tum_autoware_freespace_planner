@@ -137,6 +137,7 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     rclcpp::QoS qos{1};
     qos.transient_local();  // latch
     trajectory_pub_ = create_publisher<Trajectory>("~/output/trajectory", qos);
+    path_pub_ = create_publisher<Path>("~/output/path", qos);
     candidate_trajectories_pub_ = create_publisher<CandidateTrajectories>("~/output/candidate_trajectories", qos);
     debug_goal_poses_pub_ = create_publisher<PoseArray>("~/debug/goal_poses", qos);
     current_state_pub_ = create_publisher<std_msgs::msg::String>("~/output/current_state", qos);
@@ -355,6 +356,7 @@ bool FreespacePlannerNode::isDataReady()
 void FreespacePlannerNode::handleIdle() 
 {
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock());
+  path_out_ = utils::convert_to_path(trajectory_);
 
   if (!planning_requested_) {
     return;
@@ -375,6 +377,7 @@ void FreespacePlannerNode::handlePlanning()
 {
   // In the planning state, we stand still
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
+  path_out_ = utils::convert_to_path(trajectory_);
 
   const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
   if (is_ego_stopped) {
@@ -396,6 +399,7 @@ void FreespacePlannerNode::handlePlanning()
 void FreespacePlannerNode::handleAwaitingTrajectorySelection() 
 {
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
+  path_out_ = utils::convert_to_path(trajectory_);
   
   // If a planning request is received here (e.g. the user likes none of the trajectories and the
   // environment has changed since last initiation), allow going back to the planning step
@@ -409,15 +413,24 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
   // TODO - we likely need here a logic that compares timestamps of desired trajectory message and 
   // trajectories to get a indication of where to set the goal point
 
-  if (desired_trajectory_index_ >= candidate_trajectories_.candidate_trajectories.size()) {
+  if (!desired_trajectory_index_) {
+    return;
+  }
+
+  const auto desired_trajectory_index = desired_trajectory_index_.value();
+  if (desired_trajectory_index >= candidate_trajectories_.candidate_trajectories.size()) {
     RCLCPP_INFO(this->get_logger(), "Desired trajectory index too large.");
     return;
   }
 
   RCLCPP_INFO(this->get_logger(), "Populating trajectory with data from candidate trajectory.");
-  trajectory_.header = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).header;
-  trajectory_.points = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index_.value()).points;
+  trajectory_.header = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index).header;
+  trajectory_.points = candidate_trajectories_.candidate_trajectories.at(desired_trajectory_index).points;
   desired_trajectory_index_.reset();
+
+  RCLCPP_INFO(this->get_logger(), "converting trajectory to path");
+  path_out_ = utils::convert_to_path(trajectory_);
+  RCLCPP_INFO(this->get_logger(), "converted trajectory to path");
   
   candidate_trajectories_ = CandidateTrajectories();
 
@@ -445,6 +458,7 @@ void FreespacePlannerNode::handleExecutionFinished()
 {
   // Keep the vehicle stopped in this state
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
+  path_out_ = utils::convert_to_path(trajectory_);
 
   // User may trigger replanning if vehicles position is not as desired
   if (planning_requested_) {
@@ -494,6 +508,7 @@ void FreespacePlannerNode::onTimer()
 
   // TODO - publish the topics here or in the states themselve? 
   trajectory_pub_->publish(trajectory_);
+  path_pub_->publish(path_out_);
   candidate_trajectories_pub_->publish(candidate_trajectories_);
   debug_goal_poses_pub_->publish(goal_poses_);
   current_state_pub_->publish(state_msg_);
@@ -568,6 +583,7 @@ bool FreespacePlannerNode::planTrajectories()
 void FreespacePlannerNode::reset()
 {
   trajectory_ = Trajectory();
+  path_out_ = Path();
   candidate_trajectories_ = CandidateTrajectories();
   is_completed_ = false;
   std_msgs::msg::Bool is_completed_msg;

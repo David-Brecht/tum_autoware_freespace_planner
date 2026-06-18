@@ -126,6 +126,7 @@ public:
 private:
   // ros
   rclcpp::Publisher<Trajectory>::SharedPtr trajectory_pub_;
+  rclcpp::Publisher<Path>::SharedPtr path_pub_;
   rclcpp::Publisher<PoseArray>::SharedPtr debug_goal_poses_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr current_state_pub_;
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr processing_time_pub_;
@@ -158,6 +159,7 @@ private:
   std::vector<float> goal_distances_along_path_ {15.0, 20.0, 25.0, 30.0, 35.0}; // TODO read in as param
 
   Trajectory trajectory_;
+  Path path_out_;
   bool is_completed_ = false;
   // bool reset_in_progress_ = false;
   bool planning_requested_ = false;
