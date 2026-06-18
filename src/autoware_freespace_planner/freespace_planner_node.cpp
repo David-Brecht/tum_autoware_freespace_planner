@@ -443,6 +443,10 @@ void FreespacePlannerNode::handleExecutingTrajectory()
   // Emergency brake
   // Replanning, including the goal point and also repeated selection (maybe only if below a certain velocity threshold)
   
+  // Keep the headers stamp up to date
+  trajectory_.header.stamp=get_clock()->now();
+  path_out_.header.stamp=get_clock()->now();
+
   const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
   // TODO make based on the goal point itself? Think about the case where we may get to automation handover as soon as we are stopping along the trajectory
   const bool is_near_goal = utils::is_near_target(
