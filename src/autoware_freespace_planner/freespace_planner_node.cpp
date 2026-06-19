@@ -257,14 +257,30 @@ void FreespacePlannerNode::updateData()
 
 void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
 {
+  if (msg->points.empty()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Received an empty path. Ignoring path and not computing goal points.");
+    return;
+  }
+
   if (!odom_) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
       "Received path before odometry. Ignoring path and not computing goal points.");
     return;
   }
+
+  const auto goal_poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
+  if (goal_poses.empty()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Could not compute goal poses from path. Ignoring path.");
+    return;
+  }
+
   path_ = msg;
   goal_poses_.header = msg->header;
-  goal_poses_.poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
+  goal_poses_.poses = goal_poses;
 }
 
 void FreespacePlannerNode::onOdometry(const Odometry::ConstSharedPtr msg)
@@ -308,10 +324,17 @@ void FreespacePlannerNode::onTriggerReplan(
 std::vector<Pose> FreespacePlannerNode::getGoalPoses(const Path & path, const Pose & start_pose, const std::vector<float> & distance_along_path)
 {
   std::vector<Pose> goal_poses;
+  if (path.points.empty()) {
+    return goal_poses;
+  }
+
   goal_poses.reserve(distance_along_path.size());
   const size_t pose_idx = autoware::motion_utils::findNearestIndex(path.points, start_pose.position);
 
   std::vector<PathPoint> points_from_start (path.points.begin()+pose_idx, path.points.end());
+  if (points_from_start.empty()) {
+    return goal_poses;
+  }
 
   for (const auto & distance : distance_along_path) {
     Pose pose = autoware::motion_utils::calcInterpolatedPose(points_from_start, distance);
@@ -337,6 +360,11 @@ bool FreespacePlannerNode::isDataReady()
 
   if (!path_) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for path data.");
+    is_ready = false;
+  }
+
+  if (goal_poses_.poses.empty()) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for goal poses.");
     is_ready = false;
   }
 
