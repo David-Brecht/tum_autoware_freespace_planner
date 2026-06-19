@@ -32,7 +32,7 @@ TRIGGER_SERVICE   = "/external/remote/freespace_planner/trigger_replan"
 STATE_TOPIC       = "/external/remote/freespace_planner/output/current_state"
 MOTION_STATE_TOPIC        = "/api/motion/state"
 TELEOPERATION_STATE_TOPIC = "/external/remote/teleoperation_state"
-MUX_SERVICE               = "/planning/trajectory_multiplexer/select_input"
+MUX_SERVICE               = "/planning/scenario_planning/lane_driving/behavior_planning/path_multiplexer/select_input"
 CHANGE_TO_STOP_SERVICE    = "/api/operation_mode/change_to_stop"
 CHANGE_TO_REMOTE_SERVICE  = "/api/operation_mode/change_to_remote"
 CHANGE_TO_AUTO_SERVICE    = "/api/operation_mode/change_to_autonomous"
@@ -245,7 +245,7 @@ class TrajectorySelectorGUI:
         self._action_btn(remote_frame, "Set Autoware to Remote",
                          lambda cb: self._node.call_change_to_remote(cb),
                          plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
-        self._action_btn(remote_frame, "Set Trajectory Multiplexer to Remote",
+        self._action_btn(remote_frame, "Set Path Multiplexer to Remote",
                          lambda cb: self._node.call_mux_remote(cb),
                          plan_font, _wrap).pack(fill=tk.X)
 
@@ -307,7 +307,7 @@ class TrajectorySelectorGUI:
         self._action_btn(auto_frame, "Set Autoware to Auto",
                          lambda cb: self._node.call_change_to_auto(cb),
                          plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
-        self._action_btn(auto_frame, "Set Trajectory Multiplexer to Auto",
+        self._action_btn(auto_frame, "Set Path Multiplexer to Auto",
                          lambda cb: self._node.call_mux_auto(cb),
                          plan_font, _wrap).pack(fill=tk.X)
 

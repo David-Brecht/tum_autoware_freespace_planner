@@ -10,47 +10,21 @@
   <arg name="input_path" default="/planning/scenario_planning/lane_driving/behavior_planning/path"/>
   <arg name="input_occupancy_grid" default="/planning/scenario_planning/parking/costmap_generator/occupancy_grid"/>
   <arg name="input_odometry" default="/localization/kinematic_state"/>
-  <!-- <arg name="output_trajectory" default="/external/remote/freespace_planner/output/trajectory"/> -->
-  <!-- <arg name="output_trajectory" default="/external/remote/trajectory"/> -->
+  <arg name="output_trajectory" default="/external/remote/trajectory"/>
+  <arg name="output_path" default="/external/remote/path"/>
   <arg name="is_completed" default="is_completed"/>
   <arg name="param_file" default="$(find-pkg-share tum_autoware_freespace_planner)/config/freespace_planner.param.yaml"/>
   <arg name="vehicle_info_param_file" default="$(find-pkg-share sample_vehicle_description)/config/vehicle_info.param.yaml"/>
-
+  
   <node pkg="tum_autoware_freespace_planner" exec="freespace_planner" namespace="/external/remote" name="freespace_planner" output="screen">
     <param name="use_sim_time" value="$(var use_sim_time)"/>
     <remap from="~/input/path" to="$(var input_path)"/>
     <remap from="~/input/occupancy_grid" to="$(var input_occupancy_grid)"/>
     <remap from="~/input/odometry" to="$(var input_odometry)"/>
-    <remap from="~/output/trajectory" to="/external/remote/freespace_planner/output/trajectory"/>
+    <remap from="~/output/trajectory" to="$(var output_trajectory)"/>
+    <remap from="~/output/path" to="$(var output_path)"/>
     <remap from="is_completed" to="$(var is_completed)"/>
     <param from="$(var param_file)"/>
     <param from="$(var vehicle_info_param_file)"/>
-  </node>
-
-  <!-- VELOCITY SMOOTHER -->
-  <arg name="common_param_path" default="$(find-pkg-share autoware_velocity_smoother)/config/default_common.param.yaml"/>
-  <arg name="nearest_search_param_path" default="$(find-pkg-share autoware_core_planning)/config/nearest_search.param.yaml"/>
-  <!-- <arg name="input_trajectory" default="/external/remote/freespace_planner/output/trajectory"/> -->
-  <!-- <arg name="output_trajectory" default="/external/remote/trajectory"/> -->
-  <arg name="publish_debug_trajs" default="true"/>
-  <arg name="velocity_smoother_type" default="JerkFiltered"/>
-  <arg name="param_path" default="$(find-pkg-share autoware_velocity_smoother)/config/default_velocity_smoother.param.yaml"/>
-  <arg name="velocity_smoother_param_path" default="$(find-pkg-share autoware_velocity_smoother)/config/$(var velocity_smoother_type).param.yaml"/>
-
-  <node pkg="autoware_velocity_smoother" exec="velocity_smoother_node" namespace="/external/remote" name="velocity_smoother" output="screen">
-    <param name="use_sim_time" value="$(var use_sim_time)"/>
-    <param from="$(var vehicle_info_param_file)"/>
-    <param from="$(var common_param_path)"/>
-    <param from="$(var nearest_search_param_path)"/>
-    <param from="$(var param_path)"/>
-    <param from="$(var velocity_smoother_param_path)"/>
-    <param name="publish_debug_trajs" value="$(var publish_debug_trajs)"/>
-    <param name="algorithm_type" value="$(var velocity_smoother_type)"/>
-    <remap from="~/input/trajectory" to="/external/remote/freespace_planner/output/trajectory"/>
-    <remap from="~/output/trajectory" to="/external/remote/trajectory"/>
-    <remap from="~/input/external_velocity_limit_mps" to="/planning/scenario_planning/max_velocity"/>
-    <remap from="~/input/acceleration" to="/localization/acceleration"/>
-    <remap from="~/input/operation_mode_state" to="/system/operation_mode/state"/>
-    <remap from="~/output/current_velocity_limit_mps" to="/planning/scenario_planning/current_max_velocity"/>
   </node>
 </launch>
