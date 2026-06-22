@@ -6,12 +6,6 @@
     "freespace_planner_params": {
       "type": "object",
       "properties": {
-        "planning_algorithm": {
-          "type": "string",
-          "enum": ["astar", "rrtstar"],
-          "default": "astar",
-          "description": "Planning algorithm to use, options: astar, rrtstar."
-        },
         "waypoints_velocity": {
           "type": "number",
           "default": 5.0,
@@ -219,47 +213,9 @@
             "distance_heuristic_weight",
             "smoothness_weight"
           ]
-        },
-        "rrtstar": {
-          "type": "object",
-          "properties": {
-            "enable_update": {
-              "type": "boolean",
-              "default": true,
-              "description": "Enable updates in RRT*."
-            },
-            "use_informed_sampling": {
-              "type": "boolean",
-              "default": true,
-              "description": "Use informed sampling in RRT*."
-            },
-            "max_planning_time": {
-              "type": "number",
-              "default": 150.0,
-              "description": "Maximum planning time for RRT*."
-            },
-            "neighbor_radius": {
-              "type": "number",
-              "default": 8.0,
-              "description": "Radius for neighboring nodes in RRT*."
-            },
-            "margin": {
-              "type": "number",
-              "default": 0.1,
-              "description": "Margin for RRT* sampling."
-            }
-          },
-          "required": [
-            "enable_update",
-            "use_informed_sampling",
-            "max_planning_time",
-            "neighbor_radius",
-            "margin"
-          ]
         }
       },
       "required": [
-        "planning_algorithm",
         "waypoints_velocity",
         "update_rate",
         "th_arrived_distance_m",
@@ -289,8 +245,7 @@
         "reverse_weight",
         "direction_change_weight",
         "obstacle_threshold",
-        "astar",
-        "rrtstar"
+        "astar"
       ],
       "additionalProperties": false
     }

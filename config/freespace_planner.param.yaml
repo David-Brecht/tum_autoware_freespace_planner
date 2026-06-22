@@ -1,7 +1,6 @@
 /**:
   ros__parameters:
     # -- Node Configurations --
-    planning_algorithm: "astar"  # options: astar, rrtstar
     waypoints_velocity: 5.0
     update_rate: 10.0
     th_arrived_distance_m: 1.5
@@ -42,11 +41,4 @@
       obstacle_distance_weight: 1.75
       goal_lat_distance_weight: 5.0
       goal_poses_along_path: [15.0, 20.0, 25.0, 30.0, 35.0]
-
-    # -- RRT* search Configurations --
-    rrtstar:
-      enable_update: true
-      use_informed_sampling: true
-      max_planning_time: 150.0
-      neighbor_radius: 8.0
-      margin: 0.1
+      

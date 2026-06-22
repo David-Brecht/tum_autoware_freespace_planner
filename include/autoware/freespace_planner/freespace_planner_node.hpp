@@ -35,7 +35,6 @@
 
 #include <autoware/freespace_planning_algorithms/astar_search.hpp>
 #include <autoware/freespace_planning_algorithms/reeds_shepp.hpp>
-#include <autoware/freespace_planning_algorithms/rrtstar.hpp>
 #include <autoware/route_handler/route_handler.hpp>
 #include <autoware_utils/ros/polling_subscriber.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
@@ -77,8 +76,6 @@ using autoware::freespace_planning_algorithms::AbstractPlanningAlgorithm;
 using autoware::freespace_planning_algorithms::AstarParam;
 using autoware::freespace_planning_algorithms::AstarSearch;
 using autoware::freespace_planning_algorithms::PlannerCommonParam;
-using autoware::freespace_planning_algorithms::RRTStar;
-using autoware::freespace_planning_algorithms::RRTStarParam;
 using autoware::freespace_planning_algorithms::VehicleShape;
 using autoware_adapi_v1_msgs::msg::OperationModeState;
 using autoware_internal_planning_msgs::msg::CandidateTrajectories;
@@ -97,7 +94,6 @@ using std_srvs::srv::Trigger;
 
 struct NodeParam
 {
-  std::string planning_algorithm;
   double waypoints_velocity;  // constant velocity on planned waypoints [km/h]
   double update_rate;         // replanning and publishing rate [Hz]
   double th_arrived_distance_m;

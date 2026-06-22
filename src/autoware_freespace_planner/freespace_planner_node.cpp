@@ -81,7 +81,6 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
   // NodeParam
   {
     auto & p = node_param_;
-    p.planning_algorithm = declare_parameter<std::string>("planning_algorithm");
     p.waypoints_velocity = declare_parameter<double>("waypoints_velocity");
     p.update_rate = declare_parameter<double>("update_rate");
     p.th_arrived_distance_m = declare_parameter<double>("th_arrived_distance_m");
@@ -660,17 +659,10 @@ void FreespacePlannerNode::initializePlanningAlgorithm()
 
   const auto planner_common_param = getPlannerCommonParam();
 
-  const auto algo_name = node_param_.planning_algorithm;
-
   // initialize specified algorithm
-  if (algo_name == "astar") {
-    algo_ = std::make_unique<AstarSearch>(planner_common_param, extended_vehicle_shape, *this);
-  } else if (algo_name == "rrtstar") {
-    algo_ = std::make_unique<RRTStar>(planner_common_param, extended_vehicle_shape, *this);
-  } else {
-    throw std::runtime_error("No such algorithm named " + algo_name + " exists.");
-  }
-  RCLCPP_INFO_STREAM(get_logger(), "initialize planning algorithm: " << algo_name);
+  algo_ = std::make_unique<AstarSearch>(planner_common_param, extended_vehicle_shape, *this);
+
+  RCLCPP_INFO_STREAM(get_logger(), "initialize astar planning algorithm");
 }
 }  // namespace autoware::freespace_planner
 
