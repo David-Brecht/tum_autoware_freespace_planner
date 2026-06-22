@@ -91,6 +91,8 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     p.vehicle_shape_margin_m = declare_parameter<double>("vehicle_shape_margin_m");
     p.replan_when_obstacle_found = declare_parameter<bool>("replan_when_obstacle_found");
     p.replan_when_course_out = declare_parameter<bool>("replan_when_course_out");
+    p.goal_distances_along_path =
+      declare_parameter<std::vector<double>>("goal_distances_along_path");
   }
 
   // set vehicle_info
@@ -269,7 +271,8 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
     return;
   }
 
-  const auto goal_poses = getGoalPoses(*msg, odom_->pose.pose, goal_distances_along_path_);
+  const auto goal_poses =
+    getGoalPoses(*msg, odom_->pose.pose, node_param_.goal_distances_along_path);
   if (goal_poses.empty()) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
@@ -320,7 +323,9 @@ void FreespacePlannerNode::onTriggerReplan(
   response->message = "Replanning requested.";
 }
 
-std::vector<Pose> FreespacePlannerNode::getGoalPoses(const Path & path, const Pose & start_pose, const std::vector<float> & distance_along_path)
+std::vector<Pose> FreespacePlannerNode::getGoalPoses(
+  const Path & path, const Pose & start_pose,
+  const std::vector<double> & distance_along_path)
 {
   std::vector<Pose> goal_poses;
   if (path.points.empty()) {

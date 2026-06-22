@@ -1,18 +1,20 @@
 /**:
   ros__parameters:
     # -- Node Configurations --
-    waypoints_velocity: 5.0
+    waypoints_velocity: 7.0
     update_rate: 10.0
     th_arrived_distance_m: 1.5
     th_stopped_time_sec: 1.0
     th_stopped_velocity_mps: 0.3
-    th_course_out_distance_m: 1.0
-    th_obstacle_time_sec: 1.0
     vehicle_shape_margin_m: 0.5
-    replan_when_obstacle_found: true
-    replan_when_course_out: true
+    th_course_out_distance_m: 1.0     # TODO remove
+    th_obstacle_time_sec: 1.0         # TODO remove
+    replan_when_obstacle_found: true  # TODO remove
+    replan_when_course_out: true      # TODO remove
+    # multiple goal point search
+    goal_distances_along_path: [15.0, 20.0, 25.0, 30.0, 35.0]
 
-    # -- Configurations common to the all planners --
+    # -- Common planner config ----------------------------------------
     # base configs
     time_limit: 500.0 # [ms]
     max_turning_ratio: 0.7 # ratio of actual turning limit of vehicle
@@ -27,7 +29,7 @@
     direction_change_weight: 2.0
     # costmap configs
     obstacle_threshold: 50
-
+    
     # -- A* search Configurations --
     astar:
       search_method: "forward"  # options: forward, backward
@@ -40,5 +42,4 @@
       smoothness_weight: 0.5
       obstacle_distance_weight: 1.75
       goal_lat_distance_weight: 5.0
-      goal_poses_along_path: [15.0, 20.0, 25.0, 30.0, 35.0]
       

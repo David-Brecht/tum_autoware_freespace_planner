@@ -104,6 +104,7 @@ struct NodeParam
   double vehicle_shape_margin_m;
   bool replan_when_obstacle_found;
   bool replan_when_course_out;
+  std::vector<double> goal_distances_along_path;
 };
 
 class FreespacePlannerNode : public rclcpp::Node
@@ -152,7 +153,6 @@ private:
   PoseStamped current_pose_;
   PoseArray goal_poses_;
   CandidateTrajectories candidate_trajectories_; 
-  std::vector<float> goal_distances_along_path_ {15.0, 20.0, 25.0, 30.0, 35.0}; // TODO read in as param
 
   Trajectory trajectory_;
   Path path_out_;
@@ -201,7 +201,7 @@ private:
   static std::vector<Pose> getGoalPoses(
     const Path & path,
     const Pose & start_pose, 
-    const std::vector<float> & distance_along_path);
+    const std::vector<double> & distance_along_path);
 
   void onTriggerReplan(
     const std::shared_ptr<Trigger::Request> request,
