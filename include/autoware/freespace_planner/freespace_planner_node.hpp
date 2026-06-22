@@ -117,8 +117,7 @@ public:
     IDLE,
     PLANNING,
     AWAITING_TRAJECTORY_SELECTION,
-    EXECUTING_TRAJECTORY,
-    EXECUTION_FINISHED
+    EXECUTING_TRAJECTORY
   };
 
 private:
@@ -220,8 +219,6 @@ private:
   void handlePlanning();
   void handleAwaitingTrajectorySelection();
   void handleExecutingTrajectory();
-  void handleExecutionFinished();
-  
 
   friend class ::TestFreespacePlanner;
 };

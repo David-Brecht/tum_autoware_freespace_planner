@@ -65,8 +65,6 @@ const char * toString(const FreespacePlannerNode::State state) {
       return "AWAITING_TRAJECTORY_SELECTION";
     case FreespacePlannerNode::State::EXECUTING_TRAJECTORY:
       return "EXECUTING_TRAJECTORY";
-    case FreespacePlannerNode::State::EXECUTION_FINISHED:
-      return "EXECUTION_FINISHED";
   }
   return "UNKNOWN";
 }
@@ -398,7 +396,7 @@ void FreespacePlannerNode::handleIdle()
   planning_requested_ = false;
 
   if (operation_mode_ != OperationModeState::REMOTE) {
-    RCLCPP_INFO(this->get_logger(), "Not yet in Remote Mode. Planning cannot be activated. Set autoware to Remote Mode and send planning request again.");
+    RCLCPP_INFO(get_logger(), "Not yet in Remote Mode. Planning cannot be activated. Set autoware to Remote Mode and send planning request again.");
     return;
   }
 
@@ -408,7 +406,6 @@ void FreespacePlannerNode::handleIdle()
 
 void FreespacePlannerNode::handlePlanning() 
 {
-  // In the planning state, we stand still
   trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
   path_out_ = utils::convert_to_path(trajectory_);
 
@@ -486,51 +483,31 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
 
 void FreespacePlannerNode::handleExecutingTrajectory() 
 {
-  // Replanning may be needed if the vehicle is stuck, e.g. because of a newly detected object on the reference path
+  // Keep the headers stamp up to date
+  trajectory_.header.stamp=get_clock()->now();
+  path_out_.header.stamp=get_clock()->now();
+
+  // Replanning may be desired if the vehicle is stuck, e.g. because of a newly detected object on the reference path
   if (planning_requested_) {
     RCLCPP_INFO(get_logger(), "User requested planning.");
     planning_requested_ = false;
     setState(State::PLANNING);
   }
-  // Keep the headers stamp up to date
-  trajectory_.header.stamp=get_clock()->now();
-  path_out_.header.stamp=get_clock()->now();
-
-  // const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
-  // TODO make based on the goal point itself? Think about the case where we may get to automation handover as soon as we are stopping along the trajectory
-  const bool is_near_goal = utils::is_near_target(
-    path_out_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
 
   // During execution, force engage (publishing on topic /autoware/engage) may happen
   // TODO this does not work properly at the moment since the mode apparently does not change to autonomous when we force engage
   // Idea: Just ask if the velocity is significantly hisher than the path nominal velocity 
   if (operation_mode_ == OperationModeState::AUTONOMOUS) {
-    RCLCPP_INFO(this->get_logger(), "Autoware is now in autonomous mode. Changing state to Execution Finished.");
-    setState(State::EXECUTION_FINISHED);
+    RCLCPP_INFO(this->get_logger(), "Autoware is now in autonomous mode. Changing state to Idle.");
+    setState(State::IDLE);
   }
 
+  // const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
+  // TODO make based on the goal point itself? Think about the case where we may get to automation handover as soon as we are stopping along the trajectory
+  const bool is_near_goal = utils::is_near_target(
+    path_out_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
   if (is_near_goal) {
     RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered.");
-    setState(State::EXECUTION_FINISHED);
-  }
-}
-
-void FreespacePlannerNode::handleExecutionFinished() 
-{
-  // Keep the vehicle stopped in this state
-  trajectory_ = utils::create_stop_trajectory(current_pose_, get_clock()); 
-  path_out_ = utils::convert_to_path(trajectory_);
-
-  // User may trigger replanning if vehicles position is not as desired
-  if (planning_requested_) {
-    RCLCPP_INFO(get_logger(), "User requested planning.");
-    planning_requested_ = false;
-    setState(State::PLANNING);
-  }  
-
-  // If autoware mode is changed to auto (teleoperation is not needed anymore), jump back to idle
-  // TODO - Give a final approval for handover?
-  if(operation_mode_ == OperationModeState::AUTONOMOUS) {
     setState(State::IDLE);
   }
 }
@@ -559,9 +536,6 @@ void FreespacePlannerNode::onTimer()
       break;
     case State::EXECUTING_TRAJECTORY:
       handleExecutingTrajectory();
-      break;
-    case State::EXECUTION_FINISHED:
-      handleExecutionFinished();
       break;
     default:
       RCLCPP_INFO(this->get_logger(), "No state identified.\n");
