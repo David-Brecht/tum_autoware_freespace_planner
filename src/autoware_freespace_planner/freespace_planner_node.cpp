@@ -486,10 +486,12 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
 
 void FreespacePlannerNode::handleExecutingTrajectory() 
 {
-  // TODO Handle... 
-  // Emergency brake
-  // Replanning, including the goal point and also repeated selection (maybe only if below a certain velocity threshold)
-  
+  // Replanning may be needed if the vehicle is stuck, e.g. because of a newly detected object on the reference path
+  if (planning_requested_) {
+    RCLCPP_INFO(get_logger(), "User requested planning.");
+    planning_requested_ = false;
+    setState(State::PLANNING);
+  }
   // Keep the headers stamp up to date
   trajectory_.header.stamp=get_clock()->now();
   path_out_.header.stamp=get_clock()->now();
@@ -500,8 +502,9 @@ void FreespacePlannerNode::handleExecutingTrajectory()
     path_out_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
 
   // During execution, force engage (publishing on topic /autoware/engage) may happen
+  // TODO this does not work properly at the moment since the mode apparently does not change to autonomous when we force engage
+  // Idea: Just ask if the velocity is significantly hisher than the path nominal velocity 
   if (operation_mode_ == OperationModeState::AUTONOMOUS) {
-    force_engage_ = false;
     RCLCPP_INFO(this->get_logger(), "Autoware is now in autonomous mode. Changing state to Execution Finished.");
     setState(State::EXECUTION_FINISHED);
   }

@@ -219,7 +219,13 @@ void append_reference_path(Path & path, const Path::ConstSharedPtr reference_pat
   const auto last_point = path.points.back().pose.position;
   const auto nearest_index = autoware::motion_utils::findNearestIndex(reference_path->points, last_point);
   const auto goal_point = autoware::motion_utils::calcLongitudinalOffsetPoint(reference_path->points, nearest_index, distance);
-  const auto goal_index = autoware::motion_utils::findNearestIndex(reference_path->points, *goal_point);
+  const auto goal_index = goal_point
+    ? autoware::motion_utils::findNearestIndex(reference_path->points, *goal_point)
+    : reference_path->points.size() - 1;
+
+  if (goal_index <= nearest_index) {
+    return;
+  }
 
   path.points.insert(
     path.points.end(),

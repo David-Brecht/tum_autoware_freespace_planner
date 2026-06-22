@@ -29,6 +29,7 @@ from std_srvs.srv import Trigger
 
 CANDIDATES_TOPIC  = "/external/remote/freespace_planner/output/candidate_trajectories"
 SELECTION_TOPIC   = "/external/remote/freespace_planner/input/desired_trajectory_index"
+HOVER_TOPIC       = "~/hover_trajectory_index"
 TRIGGER_SERVICE   = "/external/remote/freespace_planner/trigger_replan"
 STATE_TOPIC       = "/external/remote/freespace_planner/output/current_state"
 MOTION_STATE_TOPIC        = "/api/motion/state"
@@ -51,11 +52,7 @@ COLOR_LOCKED     = "#4caf50"
 COLOR_FAILED     = "#bdbdbd"
 COLOR_HOVER      = "#bbdefb"
 
-# Trajectory button palette — 4 colors, cycling (index % 4)
-# Normal:  source RGB blended on white at alpha=0.6  →  0.6*src + 0.4*255
-# Locked:  full saturation (alpha=1.0) to clearly mark selection
-_TRAJ_NORMAL = ["#FF9966", "#FFCC66", "#FFFF66", "#66FF66"]
-_TRAJ_LOCKED = ["#FF5500", "#FFAA00", "#FFFF00", "#00FF00"]
+COLOR_TRAJ_BTN = "#ffffff"
 COLOR_BG         = "#263238"
 COLOR_TEXT_LIGHT = "#eceff1"
 COLOR_TEXT_DARK  = "#212121"
@@ -75,6 +72,7 @@ class TrajectorySelectorNode(Node):
         self._sub = self.create_subscription(
             CandidateTrajectories, CANDIDATES_TOPIC, self._on_candidates, 10)
         self._pub = self.create_publisher(Int32, SELECTION_TOPIC, 10)
+        self._hover_pub = self.create_publisher(Int32, HOVER_TOPIC, 10)
         self._state_sub = self.create_subscription(
             String, STATE_TOPIC, self._on_state, 10)
         self._motion_sub = self.create_subscription(
@@ -127,6 +125,11 @@ class TrajectorySelectorNode(Node):
         msg.data = index
         self._pub.publish(msg)
         self.get_logger().info(f"Published desired_trajectory_index: {index}")
+
+    def publish_hover(self, index: int):
+        msg = Int32()
+        msg.data = index
+        self._hover_pub.publish(msg)
 
     def trigger_replan(self, done_cb):
         if not self._replan_cli.service_is_ready():
@@ -212,9 +215,11 @@ class TrajectorySelectorGUI:
 
         self._node: TrajectorySelectorNode | None = None
         self._locked_idx: int = -1
+        self._locked_hover_idx: int = -1
         self._n_candidates: int = 0
         self._buttons: list[tk.Button] = []
         self._lock = threading.Lock()
+        self._hover_reset_timer = None
 
         self._build_ui()
 
@@ -369,19 +374,19 @@ class TrajectorySelectorGUI:
 
         for i in range(n):
             is_locked = (i == locked_idx)
-            col_n = _TRAJ_NORMAL[i % len(_TRAJ_NORMAL)]
-            col_l = _TRAJ_LOCKED[i % len(_TRAJ_LOCKED)]
             btn = tk.Button(
                 self._btn_frame,
                 text=("✔ " if is_locked else "    ") + f"Trajectory {i}",
                 font=btn_font,
-                bg=col_l if is_locked else col_n,
+                bg=COLOR_TRAJ_BTN,
                 fg=COLOR_TEXT_DARK,
-                activebackground=col_l,
+                activebackground=COLOR_HOVER,
                 activeforeground=COLOR_TEXT_DARK,
                 relief=tk.FLAT, padx=6, pady=5, anchor=tk.W,
                 command=lambda idx=i: self._on_select(idx),
             )
+            btn.bind("<Enter>", lambda _e, idx=i: self._on_hover(idx))
+            btn.bind("<Leave>", lambda _e: self._on_hover(-1))
             btn.pack(fill=tk.X, pady=2)
             self._buttons.append(btn)
 
@@ -390,11 +395,9 @@ class TrajectorySelectorGUI:
             locked_idx = self._locked_idx
         for i, btn in enumerate(self._buttons):
             is_locked = (i == locked_idx)
-            col_n = _TRAJ_NORMAL[i % len(_TRAJ_NORMAL)]
-            col_l = _TRAJ_LOCKED[i % len(_TRAJ_LOCKED)]
             btn.configure(
                 text=("✔ " if is_locked else "    ") + f"Trajectory {i}",
-                bg=col_l if is_locked else col_n,
+                bg=COLOR_TRAJ_BTN,
                 fg=COLOR_TEXT_DARK,
             )
         self._publish_btn.configure(
@@ -420,9 +423,30 @@ class TrajectorySelectorGUI:
         self._plan_btn.configure(
             text="▶  Send Planning Request", bg=COLOR_PLAN_BTN, state=tk.NORMAL)
 
+    def _on_hover(self, idx: int):
+        if self._locked_hover_idx >= 0:
+            return  # selection hold takes precedence over mouse hover
+        if idx >= 0:
+            if self._hover_reset_timer is not None:
+                self._root.after_cancel(self._hover_reset_timer)
+                self._hover_reset_timer = None
+            if self._node:
+                self._node.publish_hover(idx)
+        else:
+            if self._hover_reset_timer is None:
+                self._hover_reset_timer = self._root.after(200, self._do_hover_reset)
+
+    def _do_hover_reset(self):
+        self._hover_reset_timer = None
+        if self._locked_hover_idx >= 0:
+            return
+        if self._node:
+            self._node.publish_hover(-1)
+
     def _on_select(self, idx: int):
         with self._lock:
             self._locked_idx = idx
+        self._locked_hover_idx = idx
         self._update_button_styles()
 
     def _on_publish_selection(self):
@@ -434,7 +458,13 @@ class TrajectorySelectorGUI:
             self._node.publish_selection(idx)
         with self._lock:
             self._locked_idx = -1
+        self._root.after(100, self._release_locked_hover)
         self._update_button_styles()
+
+    def _release_locked_hover(self):
+        self._locked_hover_idx = -1
+        if self._node:
+            self._node.publish_hover(-1)
 
     def _action_btn(self, parent, text: str, node_fn, plan_font, wrap: int) -> tk.Button:
         btn = tk.Button(parent, text=text, font=plan_font, wraplength=wrap,
@@ -466,6 +496,8 @@ class TrajectorySelectorGUI:
     def _poll_ros(self):
         if self._node:
             rclpy.spin_once(self._node, timeout_sec=0.0)
+            if self._locked_hover_idx >= 0:
+                self._node.publish_hover(self._locked_hover_idx)
         self._root.after(50, self._poll_ros)  # 20 Hz
 
     def run(self):
