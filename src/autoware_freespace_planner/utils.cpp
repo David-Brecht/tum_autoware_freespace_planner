@@ -225,6 +225,12 @@ void append_reference_path(Path & path, const Path::ConstSharedPtr reference_pat
     path.points.end(),
     reference_path->points.begin() + nearest_index + 1,
     reference_path->points.begin() + goal_index + 1);
+
+  const auto desired_velocity = path.points.at(0).longitudinal_velocity_mps;
+  for (auto & point : path.points) {
+    point.longitudinal_velocity_mps = desired_velocity;
+  }
+  path.points.back().longitudinal_velocity_mps = 0.0;
 }
 
 }  // namespace autoware::freespace_planner::utils

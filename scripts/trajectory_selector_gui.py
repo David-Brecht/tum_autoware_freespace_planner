@@ -22,6 +22,7 @@ from rclpy.node import Node
 from autoware_internal_planning_msgs.msg import CandidateTrajectories
 from autoware_adapi_v1_msgs.msg import MotionState, TeleoperationState
 from autoware_adapi_v1_msgs.srv import ChangeOperationMode, MuxSelectInput
+from autoware_vehicle_msgs.msg import Engage
 from std_msgs.msg import Int32, String
 from std_srvs.srv import Trigger
 
@@ -33,6 +34,7 @@ STATE_TOPIC       = "/external/remote/freespace_planner/output/current_state"
 MOTION_STATE_TOPIC        = "/api/motion/state"
 TELEOPERATION_STATE_TOPIC = "/external/remote/teleoperation_state"
 MUX_SERVICE               = "/planning/scenario_planning/lane_driving/behavior_planning/path_multiplexer/select_input"
+ENGAGE_TOPIC              = "/autoware/engage"
 CHANGE_TO_STOP_SERVICE    = "/api/operation_mode/change_to_stop"
 CHANGE_TO_REMOTE_SERVICE  = "/api/operation_mode/change_to_remote"
 CHANGE_TO_AUTO_SERVICE    = "/api/operation_mode/change_to_autonomous"
@@ -48,6 +50,12 @@ COLOR_DEFAULT    = "#e8e8e8"
 COLOR_LOCKED     = "#4caf50"
 COLOR_FAILED     = "#bdbdbd"
 COLOR_HOVER      = "#bbdefb"
+
+# Trajectory button palette — 4 colors, cycling (index % 4)
+# Normal:  source RGB blended on white at alpha=0.6  →  0.6*src + 0.4*255
+# Locked:  full saturation (alpha=1.0) to clearly mark selection
+_TRAJ_NORMAL = ["#FF9966", "#FFCC66", "#FFFF66", "#66FF66"]
+_TRAJ_LOCKED = ["#FF5500", "#FFAA00", "#FFFF00", "#00FF00"]
 COLOR_BG         = "#263238"
 COLOR_TEXT_LIGHT = "#eceff1"
 COLOR_TEXT_DARK  = "#212121"
@@ -72,6 +80,7 @@ class TrajectorySelectorNode(Node):
         self._motion_sub = self.create_subscription(
             MotionState, MOTION_STATE_TOPIC, self._on_motion_state, 10)
 
+        self._engage_pub = self.create_publisher(Engage, ENGAGE_TOPIC, 1)
         self._teleop_pub = self.create_publisher(TeleoperationState, TELEOPERATION_STATE_TOPIC, 1)
         self.create_timer(1.0, self._publish_teleop_state)
 
@@ -148,6 +157,13 @@ class TrajectorySelectorNode(Node):
         self._select_mux("REMOTE", done_cb)
 
     def call_mux_auto(self, done_cb):
+        self._select_mux("AUTO", done_cb)
+
+    def force_engage_and_mux_auto(self, done_cb):
+        msg = Engage()
+        msg.engage = True
+        self._engage_pub.publish(msg)
+        self.get_logger().info("Published engage=True to /autoware/engage")
         self._select_mux("AUTO", done_cb)
 
     def _call_op_mode(self, cli, done_cb):
@@ -309,6 +325,9 @@ class TrajectorySelectorGUI:
                          plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
         self._action_btn(auto_frame, "Set Path Multiplexer to Auto",
                          lambda cb: self._node.call_mux_auto(cb),
+                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        self._action_btn(auto_frame, "Force Engage Auto + Set Path Multiplexer to Auto",
+                         lambda cb: self._node.force_engage_and_mux_auto(cb),
                          plan_font, _wrap).pack(fill=tk.X)
 
         self._root.after(100, self._poll_ros)
@@ -350,13 +369,15 @@ class TrajectorySelectorGUI:
 
         for i in range(n):
             is_locked = (i == locked_idx)
+            col_n = _TRAJ_NORMAL[i % len(_TRAJ_NORMAL)]
+            col_l = _TRAJ_LOCKED[i % len(_TRAJ_LOCKED)]
             btn = tk.Button(
                 self._btn_frame,
                 text=("✔ " if is_locked else "    ") + f"Trajectory {i}",
                 font=btn_font,
-                bg=COLOR_LOCKED if is_locked else COLOR_DEFAULT,
-                fg=COLOR_TEXT_LIGHT if is_locked else COLOR_TEXT_DARK,
-                activebackground=COLOR_HOVER,
+                bg=col_l if is_locked else col_n,
+                fg=COLOR_TEXT_DARK,
+                activebackground=col_l,
                 activeforeground=COLOR_TEXT_DARK,
                 relief=tk.FLAT, padx=6, pady=5, anchor=tk.W,
                 command=lambda idx=i: self._on_select(idx),
@@ -369,10 +390,12 @@ class TrajectorySelectorGUI:
             locked_idx = self._locked_idx
         for i, btn in enumerate(self._buttons):
             is_locked = (i == locked_idx)
+            col_n = _TRAJ_NORMAL[i % len(_TRAJ_NORMAL)]
+            col_l = _TRAJ_LOCKED[i % len(_TRAJ_LOCKED)]
             btn.configure(
                 text=("✔ " if is_locked else "    ") + f"Trajectory {i}",
-                bg=COLOR_LOCKED if is_locked else COLOR_DEFAULT,
-                fg=COLOR_TEXT_LIGHT if is_locked else COLOR_TEXT_DARK,
+                bg=col_l if is_locked else col_n,
+                fg=COLOR_TEXT_DARK,
             )
         self._publish_btn.configure(
             state=tk.NORMAL if locked_idx >= 0 else tk.DISABLED)

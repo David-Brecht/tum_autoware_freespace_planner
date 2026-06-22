@@ -494,13 +494,20 @@ void FreespacePlannerNode::handleExecutingTrajectory()
   trajectory_.header.stamp=get_clock()->now();
   path_out_.header.stamp=get_clock()->now();
 
-  const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
+  // const bool is_ego_stopped = utils::is_stopped(odom_buffer_, node_param_.th_stopped_velocity_mps);
   // TODO make based on the goal point itself? Think about the case where we may get to automation handover as soon as we are stopping along the trajectory
   const bool is_near_goal = utils::is_near_target(
-    trajectory_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
+    path_out_.points.back().pose, current_pose_.pose, node_param_.th_arrived_distance_m);
 
-  if (is_ego_stopped && is_near_goal) {
-    RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered");
+  // During execution, force engage (publishing on topic /autoware/engage) may happen
+  if (operation_mode_ == OperationModeState::AUTONOMOUS) {
+    force_engage_ = false;
+    RCLCPP_INFO(this->get_logger(), "Autoware is now in autonomous mode. Changing state to Execution Finished.");
+    setState(State::EXECUTION_FINISHED);
+  }
+
+  if (is_near_goal) {
+    RCLCPP_INFO(this->get_logger(), "Vehicle near goal. Automation Handover may be triggered.");
     setState(State::EXECUTION_FINISHED);
   }
 }
