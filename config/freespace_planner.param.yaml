@@ -12,7 +12,7 @@
     replan_when_obstacle_found: true  # TODO remove
     replan_when_course_out: true      # TODO remove
     # multiple goal point search
-    goal_distances_along_path: [15.0, 20.0, 25.0, 30.0, 35.0]
+    goal_distances_along_path_m: [15.0, 20.0, 25.0, 30.0, 35.0]
 
     # -- Common planner config ----------------------------------------
     # base configs

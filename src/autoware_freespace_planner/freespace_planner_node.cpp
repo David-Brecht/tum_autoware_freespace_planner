@@ -91,8 +91,8 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     p.vehicle_shape_margin_m = declare_parameter<double>("vehicle_shape_margin_m");
     p.replan_when_obstacle_found = declare_parameter<bool>("replan_when_obstacle_found");
     p.replan_when_course_out = declare_parameter<bool>("replan_when_course_out");
-    p.goal_distances_along_path =
-      declare_parameter<std::vector<double>>("goal_distances_along_path");
+    p.goal_distances_along_path_m =
+      declare_parameter<std::vector<double>>("goal_distances_along_path_m");
   }
 
   // set vehicle_info
@@ -272,7 +272,7 @@ void FreespacePlannerNode::onPath(const Path::ConstSharedPtr msg)
   }
 
   const auto goal_poses =
-    getGoalPoses(*msg, odom_->pose.pose, node_param_.goal_distances_along_path);
+    getGoalPoses(*msg, odom_->pose.pose, node_param_.goal_distances_along_path_m);
   if (goal_poses.empty()) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
@@ -416,9 +416,20 @@ void FreespacePlannerNode::handlePlanning()
     // TODO right now we are searching until a candidate will be found. But there might be 
     // scenarios where no trajectory candidate can be found → we are stuck. Solve this via waypoint 
     // guidance or similar
-    do {
+    bool found_trajectory = false;
+    while (rclcpp::ok(get_node_base_interface()->get_context())) {
+      RCLCPP_INFO(this->get_logger(), "===========================================");
       RCLCPP_INFO(this->get_logger(), "Planning candidate trajectories.");
-    } while (!planTrajectories());
+      found_trajectory = planTrajectories();
+      if (found_trajectory) {
+        break;
+      }
+    }
+
+    if (!found_trajectory) {
+      return;
+    }
+
     setState(State::AWAITING_TRAJECTORY_SELECTION);
   } else {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 500,
@@ -578,13 +589,12 @@ bool FreespacePlannerNode::planTrajectories()
   bool any_result = false;
   candidate_trajectories_.candidate_trajectories.clear();
 
-  for (const auto & goal_pose_in_costmap_frame : goal_poses_.poses) {
+  for (size_t i = 0; i < goal_poses_.poses.size(); ++i) {
+    const auto & goal_pose_in_costmap_frame = goal_poses_.poses.at(i);
+    const rclcpp::Time goal_start = get_clock()->now();
+    const double goal_distance = node_param_.goal_distances_along_path_m.at(i);
     try {
-      const bool result = algo_->makePlan(current_pose_in_costmap_frame, goal_pose_in_costmap_frame);
-
-      if(!result) {
-        continue;
-      }
+      algo_->makePlan(current_pose_in_costmap_frame, goal_pose_in_costmap_frame);
 
       any_result = true;
 
@@ -599,14 +609,19 @@ bool FreespacePlannerNode::planTrajectories()
 
       candidate_trajectories_.candidate_trajectories.push_back(candidate_trajectory);
 
-      // TODO remove after testing
-      // RCLCPP_INFO_STREAM(this->get_logger(), "Found goal for goal pose (x = " << goal_pose_in_costmap_frame.pose.position.x << " | y = " << goal_pose_in_costmap_frame.pose.position.y << ")\n");
+      RCLCPP_INFO(
+        get_logger(), "Goal Point %.2f m: Found goal in %f seconds", goal_distance,
+        (get_clock()->now() - goal_start).seconds());
     } catch (const std::exception & e) {
       error_msg = e.what();
+      RCLCPP_INFO(
+        get_logger(), "Goal Point %.2f m: Unable to find goal. %s", goal_distance,
+        error_msg.c_str());
     }
   } 
   const rclcpp::Time end = get_clock()->now();
-  RCLCPP_INFO(get_logger(), "Freespace planning: %f [s]", (end - start).seconds());
+  RCLCPP_INFO(get_logger(), "Freespace planner total time: %f seconds", (end - start).seconds());
+  RCLCPP_INFO(get_logger(), "===========================================");
 
   if (!any_result) {
     RCLCPP_INFO(get_logger(), "Can't find goal: %s", error_msg.c_str());
