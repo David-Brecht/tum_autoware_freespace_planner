@@ -105,6 +105,7 @@ struct NodeParam
   bool replan_when_obstacle_found;
   bool replan_when_course_out;
   std::vector<double> goal_distances_along_path_m;
+  double extend_path_distance_m;
 };
 
 class FreespacePlannerNode : public rclcpp::Node

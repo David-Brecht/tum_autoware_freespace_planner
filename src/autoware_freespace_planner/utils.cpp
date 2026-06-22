@@ -211,4 +211,20 @@ Path convert_to_path(const Trajectory & trajectory) {
   return path;
 }
 
+void append_reference_path(Path & path, const Path::ConstSharedPtr reference_path, const double distance) {
+  if (path.points.empty() || !reference_path || reference_path->points.empty()) {
+    return;
+  }
+
+  const auto last_point = path.points.back().pose.position;
+  const auto nearest_index = autoware::motion_utils::findNearestIndex(reference_path->points, last_point);
+  const auto goal_point = autoware::motion_utils::calcLongitudinalOffsetPoint(reference_path->points, nearest_index, distance);
+  const auto goal_index = autoware::motion_utils::findNearestIndex(reference_path->points, *goal_point);
+
+  path.points.insert(
+    path.points.end(),
+    reference_path->points.begin() + nearest_index + 1,
+    reference_path->points.begin() + goal_index + 1);
+}
+
 }  // namespace autoware::freespace_planner::utils

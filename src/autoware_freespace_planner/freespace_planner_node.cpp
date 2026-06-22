@@ -93,6 +93,7 @@ FreespacePlannerNode::FreespacePlannerNode(const rclcpp::NodeOptions & node_opti
     p.replan_when_course_out = declare_parameter<bool>("replan_when_course_out");
     p.goal_distances_along_path_m =
       declare_parameter<std::vector<double>>("goal_distances_along_path_m");
+    p.extend_path_distance_m = declare_parameter<double>("extend_path_distance_m");
   }
 
   // set vehicle_info
@@ -473,6 +474,9 @@ void FreespacePlannerNode::handleAwaitingTrajectorySelection()
 
   RCLCPP_INFO(this->get_logger(), "converting trajectory to path");
   path_out_ = utils::convert_to_path(trajectory_);
+  if (node_param_.extend_path_distance_m > 1e-6) {
+    utils::append_reference_path(path_out_, path_, node_param_.extend_path_distance_m);
+  }
   RCLCPP_INFO(this->get_logger(), "converted trajectory to path");
   
   candidate_trajectories_ = CandidateTrajectories();

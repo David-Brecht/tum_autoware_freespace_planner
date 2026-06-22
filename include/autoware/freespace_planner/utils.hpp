@@ -38,6 +38,7 @@ using autoware_planning_msgs::msg::Path;
 using autoware_planning_msgs::msg::PathPoint;
 using autoware_planning_msgs::msg::Trajectory;
 using autoware_planning_msgs::msg::TrajectoryPoint;
+using geometry_msgs::msg::Point;
 using geometry_msgs::msg::Pose;
 using geometry_msgs::msg::PoseArray;
 using geometry_msgs::msg::PoseStamped;
@@ -76,6 +77,8 @@ bool is_near_target(
   const Pose & target_pose, const Pose & current_pose, const double th_distance_m);
 
 Path convert_to_path(const Trajectory & trajectory);
+
+void append_reference_path(Path & path, const Path::ConstSharedPtr reference_path, const double distance);
 }  // namespace autoware::freespace_planner::utils
 
 #endif  // AUTOWARE__FREESPACE_PLANNER__UTILS_HPP_
