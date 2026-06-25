@@ -37,11 +37,13 @@
 #include <autoware/motion_utils/trajectory/interpolation.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
+#include <autoware_utils/ros/uuid_helper.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <memory>
 #include <string>
@@ -576,6 +578,7 @@ bool FreespacePlannerNode::planTrajectories()
   std::string error_msg;
   bool any_result = false;
   candidate_trajectories_.candidate_trajectories.clear();
+  candidate_trajectories_.generator_info.clear();
 
   for (size_t i = 0; i < goal_poses_.poses.size(); ++i) {
     const auto & goal_pose_in_costmap_frame = goal_poses_.poses.at(i);
@@ -589,13 +592,20 @@ bool FreespacePlannerNode::planTrajectories()
       autoware_internal_planning_msgs::msg::CandidateTrajectory candidate_trajectory;
       candidate_trajectory.header.stamp = start; // simplification
       candidate_trajectory.header.frame_id = goal_poses_.header.frame_id;
-      // candidate_trajectory.uuid = // TODO needed?
-            
+      candidate_trajectory.generator_id = autoware_utils::generate_uuid();
+
       const auto tmp_trajectory_ = utils::create_trajectory(current_pose_, algo_->getWaypoints(), node_param_.waypoints_velocity);
 
       candidate_trajectory.points = tmp_trajectory_.points;
 
       candidate_trajectories_.candidate_trajectories.push_back(candidate_trajectory);
+
+      // Encode the goal distance ahead of ego as the generator name (e.g. "20_m"),
+      // linked to the trajectory via generator_id so a downstream node can parse it.
+      autoware_internal_planning_msgs::msg::GeneratorInfo generator_info;
+      generator_info.generator_id = candidate_trajectory.generator_id;
+      generator_info.generator_name.data = std::to_string(static_cast<int>(std::round(goal_distance))) + "_m";
+      candidate_trajectories_.generator_info.push_back(generator_info);
 
       RCLCPP_INFO(
         get_logger(), "Goal Point %.2f m: Found goal in %f seconds", goal_distance,
