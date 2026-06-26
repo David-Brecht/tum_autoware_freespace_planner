@@ -2,9 +2,9 @@
   <arg name="use_sim_time" default="false"/>
 
   <!-- DUMMY GUI -->
-  <node pkg="tum_autoware_freespace_planner" exec="trajectory_selector_gui.py" name="trajectory_selector_gui" output="screen">
+  <!-- <node pkg="tum_autoware_freespace_planner" exec="trajectory_selector_gui.py" name="trajectory_selector_gui" output="screen">
     <param name="use_sim_time" value="$(var use_sim_time)"/>
-  </node>
+  </node> -->
 
   <!-- FREESPACE PLANNER -->
   <arg name="input_path" default="/planning/scenario_planning/lane_driving/behavior_planning/output/path"/>

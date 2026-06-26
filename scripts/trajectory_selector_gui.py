@@ -322,15 +322,15 @@ class TrajectorySelectorGUI:
 
         auto_frame = tk.Frame(self._root, bg=COLOR_BG, padx=12, pady=10)
         auto_frame.pack(fill=tk.X)
-        self._action_btn(auto_frame, "Set Autoware to Stop",
-                         lambda cb: self._node.call_change_to_stop(cb),
-                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
-        self._action_btn(auto_frame, "Set Autoware to Auto",
-                         lambda cb: self._node.call_change_to_auto(cb),
-                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
-        self._action_btn(auto_frame, "Set Path Multiplexer to Auto",
-                         lambda cb: self._node.call_mux_auto(cb),
-                         plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        # self._action_btn(auto_frame, "Set Autoware to Stop",
+        #                  lambda cb: self._node.call_change_to_stop(cb),
+        #                  plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        # self._action_btn(auto_frame, "Set Autoware to Auto",
+        #                  lambda cb: self._node.call_change_to_auto(cb),
+        #                  plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
+        # self._action_btn(auto_frame, "Set Path Multiplexer to Auto",
+        #                  lambda cb: self._node.call_mux_auto(cb),
+        #                  plan_font, _wrap).pack(fill=tk.X, pady=(0, 4))
         self._action_btn(auto_frame, "Force Engage Auto + Set Path Multiplexer to Auto",
                          lambda cb: self._node.force_engage_and_mux_auto(cb),
                          plan_font, _wrap).pack(fill=tk.X)
